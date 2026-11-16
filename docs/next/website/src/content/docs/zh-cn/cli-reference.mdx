@@ -171,6 +171,16 @@ herdr workspace create --cwd ~/project --label api --no-focus
 
 工作区是顶层项目或工作上下文。创建工作区也会创建第一个标签页和根窗格。JSON 响应中的 `.result.workspace.workspace_id`、`.result.tab.tab_id` 和 `.result.root_pane.pane_id` 是对应 ID。
 
+让已连接的 Herdr 客户端显示某个工作区，必要时切换机器：
+
+```bash
+herdr client focus <workspace_id> [--endpoint local|PROFILE_ID|LABEL] [--all-clients] [--json]
+```
+
+`workspace focus` 改变服务器当前聚焦的工作区。`client focus` 让 TUI 客户端切换视图，也可以切换到另一台机器。收到请求的服务器会把它转发给最近活跃的已连接客户端。加上 `--all-clients` 会发给所有已连接客户端。不带 `--endpoint` 时，工作区属于该服务器所在的机器。`--endpoint` 接受 `local`，或 `herdr machine list` 中已保存机器的 profile ID 或标签，以客户端看到的名称为准。来自已保存 SSH 机器的请求只能聚焦该机器自己的工作区，其他请求会被客户端拒绝。可以在窗格、弹窗或服务器所在机器上的普通终端中运行。
+
+至少一个客户端接受请求时，命令以 0 退出。没有客户端接受时，例如没有已连接的客户端或客户端版本太旧，会输出 `no attached herdr client accepted the focus request` 并以 1 退出。`--json` 会打印响应，例如 `{"id":"cli:client:focus","result":{"type":"client_focus","delivered":1}}`。接受只表示客户端收到了请求，并不保证切换成功。例如，客户端会忽略它不认识的机器标签。
+
 ## Worktree
 
 ```bash

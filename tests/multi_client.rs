@@ -388,3 +388,89 @@ fn rapid_client_shell_connect_disconnect_remains_healthy() {
     assert!(response.to_string().contains("pong"));
     cleanup(server, base);
 }
+
+fn focused_workspace(socket: &Path) -> Option<String> {
+    let response = api_request(
+        socket,
+        r#"{"id":"list","method":"workspace.list","params":{}}"#,
+    );
+    response
+        .pointer("/result/workspaces")?
+        .as_array()?
+        .iter()
+        .find(|workspace| workspace["focused"] == true)?
+        .get("workspace_id")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn client_focus(socket: &Path, workspace_id: &str) -> Value {
+    api_request(
+        socket,
+        &format!(
+            r#"{{"id":"focus","method":"client.focus","params":{{"workspace_id":"{workspace_id}"}}}}"#
+        ),
+    )
+}
+
+#[test]
+fn client_focus_switches_the_attached_tui_client_workspace() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config = base.join("config");
+    let runtime = base.join("runtime");
+    let api = runtime.join("herdr.sock");
+    let clients = runtime.join("herdr-client.sock");
+    let server = spawn_server(&config, &runtime, &api);
+    wait_for_socket(&api, Duration::from_secs(10));
+    wait_for_socket(&clients, Duration::from_secs(10));
+    create_pane(&api, "first");
+    create_pane(&api, "second");
+    let response = api_request(
+        &api,
+        r#"{"id":"list","method":"workspace.list","params":{}}"#,
+    );
+    let ids: Vec<String> = response["result"]["workspaces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|workspace| workspace["workspace_id"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(ids.len() >= 2, "{response}");
+
+    // Without an attached client nothing can accept the request.
+    assert_eq!(client_focus(&api, &ids[0])["result"]["delivered"], 0);
+    let missing = client_focus(&api, "w_missing");
+    assert_eq!(missing["error"]["code"], "workspace_not_found");
+
+    let client = spawn_client(&config, &runtime, &api);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut target = 0;
+    loop {
+        let response = client_focus(&api, &ids[target]);
+        if response["result"]["delivered"] == 1 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "client never accepted focus: {response}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    for _ in 0..2 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while focused_workspace(&api).as_deref() != Some(ids[target].as_str()) {
+            assert!(
+                Instant::now() < deadline,
+                "client did not focus {}: {:?}",
+                ids[target],
+                focused_workspace(&api)
+            );
+            thread::sleep(Duration::from_millis(50));
+        }
+        target = 1 - target;
+        assert_eq!(client_focus(&api, &ids[target])["result"]["delivered"], 1);
+    }
+    drop(client);
+    cleanup(server, base);
+}

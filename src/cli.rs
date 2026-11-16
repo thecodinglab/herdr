@@ -21,6 +21,7 @@ macro_rules! println {
 
 pub(crate) mod agent;
 mod api;
+mod client;
 mod completion;
 mod integration;
 mod machine;
@@ -134,6 +135,8 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "plugin" => plugin::run_plugin_command(&args[2..])?,
         "integration" => integration::run_integration_command(&args[2..])?,
         "session" => run_session_command(&args[2..])?,
+        // Bare `herdr client` is the hidden TUI client mode handled by main.
+        "client" if args.len() > 2 => client::run_client_command(&args[2..])?,
         _ => return Ok(CommandOutcome::NotCli),
     };
 

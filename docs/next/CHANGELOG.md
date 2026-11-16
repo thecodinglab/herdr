@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- `herdr client focus <workspace_id>` asks the attached Herdr client to show a workspace, switching to another saved machine with `--endpoint`. It works from a pane, a popup, or a plain terminal. Only the most recently active client gets the request unless you pass `--all-clients`. A request from a saved SSH machine can only focus that machine's own workspaces.
+
 ## [0.9.5] - 2026-10-14
 
 This is a hotfix release for v0.9.4. See the v0.9.4 notes for the full feature release: https://github.com/herdrdev/herdr/releases/tag/v0.9.4

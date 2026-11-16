@@ -316,4 +316,58 @@ impl ClientShellState {
         }
         true
     }
+
+    /// Focuses a workspace for a `client.focus` request forwarded by `sender`'s server.
+    ///
+    /// An omitted endpoint means the sender itself. A remote server may only steer this
+    /// client to its own workspaces; naming any other endpoint is refused, as is a name
+    /// that does not resolve to exactly one endpoint in this client's catalog.
+    pub(crate) fn focus_requested_by_endpoint(
+        &mut self,
+        sender: &ClientEndpointId,
+        request: crate::protocol::endpoint::EndpointClientFocus,
+    ) -> Result<ClientShellInput, String> {
+        let target = match request.endpoint.as_deref() {
+            None => sender.clone(),
+            Some(reference) => self
+                .resolve_endpoint_reference(reference)
+                .ok_or_else(|| format!("unknown machine {reference:?}"))?,
+        };
+        if !sender.is_local() && &target != sender {
+            return Err("a remote machine may only focus its own workspaces".into());
+        }
+        let mut outcome = ClientShellInput::default();
+        self.focus_or_activate(
+            target,
+            ClientEndpointFocusTarget::Workspace(request.workspace_id),
+            &mut outcome,
+        );
+        Ok(outcome)
+    }
+
+    /// Resolves `local`, a saved profile id, or a unique saved machine label.
+    fn resolve_endpoint_reference(&self, reference: &str) -> Option<ClientEndpointId> {
+        if reference == "local" {
+            return Some(ClientEndpointId::Local);
+        }
+        if let Ok(profile_id) = crate::client::endpoint::ProfileId::parse(reference) {
+            let endpoint_id = ClientEndpointId::Ssh(profile_id);
+            if self
+                .endpoints
+                .iter()
+                .any(|endpoint| endpoint.endpoint_id == endpoint_id)
+            {
+                return Some(endpoint_id);
+            }
+        }
+        let mut matches = self
+            .endpoints
+            .iter()
+            .filter(|endpoint| !endpoint.endpoint_id.is_local() && endpoint.label == reference);
+        let endpoint = matches.next()?;
+        matches
+            .next()
+            .is_none()
+            .then(|| endpoint.endpoint_id.clone())
+    }
 }

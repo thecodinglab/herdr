@@ -192,6 +192,8 @@ pub(crate) struct ClientConnection {
     pub(crate) shell_deferred_navigation_response: Option<Vec<u8>>,
     /// Whether this shell uses the endpoint-owned keymap rather than a client-owned keymap.
     pub(crate) shell_uses_endpoint_keybindings: bool,
+    /// Whether this shell advertised that it acts on forwarded `client.focus` requests.
+    pub(crate) accepts_client_focus: bool,
     /// Channels for sending framed ServerMessage data to the client writer thread.
     pub(crate) writer: Option<ClientWriter>,
 }
@@ -255,6 +257,7 @@ impl ClientConnection {
             shell_deferred_navigation_request_id: None,
             shell_deferred_navigation_response: None,
             shell_uses_endpoint_keybindings: false,
+            accepts_client_focus: false,
             writer,
         }
     }
@@ -481,6 +484,30 @@ pub(crate) fn latest_shell_client(clients: &HashMap<u64, ClientConnection>) -> O
         .map(|(&client_id, _)| client_id)
 }
 
+/// Client shells that receive a forwarded `client.focus` request: the most recently
+/// active capable shell, or every capable shell. Inactive surfaces still count because a
+/// client viewing another machine keeps this connection in the background.
+pub(crate) fn client_focus_targets(
+    clients: &HashMap<u64, ClientConnection>,
+    all_clients: bool,
+) -> Vec<u64> {
+    let mut eligible: Vec<(u64, u64)> = clients
+        .iter()
+        .filter(|(_, client)| {
+            client.is_shell_client() && client.accepts_client_focus && client.writer.is_some()
+        })
+        .map(|(&client_id, client)| (client.last_activity, client_id))
+        .collect();
+    eligible.sort_unstable_by(|left, right| right.cmp(left));
+    if !all_clients {
+        eligible.truncate(1);
+    }
+    eligible
+        .into_iter()
+        .map(|(_, client_id)| client_id)
+        .collect()
+}
+
 pub(crate) fn terminal_stream_client_ids(
     clients: &HashMap<u64, ClientConnection>,
     terminal_id: &str,
@@ -541,6 +568,42 @@ mod tests {
             crate::protocol::RenderEncoding::SemanticFrame,
             None,
         )
+    }
+
+    #[test]
+    fn client_focus_targets_prefer_the_most_recently_active_capable_shell() {
+        let shell = |last_activity: u64, capable: bool, attached: bool| {
+            let (control, _) = std::sync::mpsc::channel();
+            let (render, _) = std::sync::mpsc::sync_channel(1);
+            let mut client = ClientConnection::new(
+                (80, 24),
+                crate::kitty_graphics::HostCellSize::default(),
+                last_activity,
+                crate::protocol::RenderEncoding::SemanticFrame,
+                attached.then(|| ClientWriter::test_channel(control, render)),
+            );
+            client.accepts_client_focus = capable;
+            client
+        };
+        let mut clients = HashMap::new();
+        clients.insert(1, shell(5, true, true));
+        clients.insert(2, shell(9, true, true));
+        // Old clients never see the control, so they are not delivery targets.
+        clients.insert(3, shell(20, false, true));
+        // A detached shell has no writer to accept the control.
+        clients.insert(4, shell(30, true, false));
+        let mut inactive = shell(7, true, true);
+        inactive.shell_surface_active = false;
+        clients.insert(5, inactive);
+        let mut terminal = shell(40, true, true);
+        terminal.mode = ClientConnectionMode::TerminalAttach {
+            terminal_id: "t1".into(),
+        };
+        clients.insert(6, terminal);
+
+        assert_eq!(client_focus_targets(&clients, false), vec![2]);
+        assert_eq!(client_focus_targets(&clients, true), vec![2, 5, 1]);
+        assert!(client_focus_targets(&HashMap::new(), false).is_empty());
     }
 
     #[test]

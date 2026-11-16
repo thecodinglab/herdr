@@ -68,6 +68,33 @@ crate::cli::projection::cli_params! {
     }
 }
 
+crate::cli::projection::cli_params! {
+    /// Asks attached TUI clients to focus a workspace, switching machines when needed.
+    #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+    pub struct ClientFocusParams => ClientFocusProjection {
+        pub workspace_id: String => crate::cli::projection::Field::new(String::new()).input(
+            crate::cli::projection::Input::positional("workspace_id", 0, |workspace_id, value| {
+                *workspace_id = value.to_owned();
+                Ok(())
+            }).value_name("WORKSPACE_ID")
+        ),
+        /// `local`, or a saved machine profile id or label in the client's catalog.
+        /// Omitted means the machine whose server received the request.
+        #[serde(default)]
+        pub endpoint: Option<String> => crate::cli::projection::Field::new(None).input(
+            crate::cli::projection::optional_text("endpoint", "LOCAL|PROFILE_ID|LABEL")
+                .once()
+                .help("Machine that owns the workspace: local, a saved machine id, or its label")
+        ),
+        /// Deliver to every attached client instead of only the most recently active one.
+        #[serde(default)]
+        pub all_clients: bool => crate::cli::projection::Field::new(false).input(
+            crate::cli::projection::boolean("all-clients", true)
+                .help("Ask every attached client, not only the most recently active one")
+        ),
+    }
+}
+
 /// Updates whether the requesting client shell receives and controls pane presentation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClientShellSurfaceSetParams {

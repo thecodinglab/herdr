@@ -1702,6 +1702,31 @@
           ],
           "type": "object"
         },
+        "ClientFocusParams": {
+          "description": "Asks attached TUI clients to focus a workspace, switching machines when needed.",
+          "properties": {
+            "all_clients": {
+              "default": false,
+              "description": "Deliver to every attached client instead of only the most recently active one.",
+              "type": "boolean"
+            },
+            "endpoint": {
+              "default": null,
+              "description": "`local`, or a saved machine profile id or label in the client's catalog.\nOmitted means the machine whose server received the request.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "workspace_id"
+          ],
+          "type": "object"
+        },
         "ClientShellSurfaceSetParams": {
           "description": "Updates whether the requesting client shell receives and controls pane presentation.",
           "properties": {
@@ -6319,6 +6344,22 @@
             "params"
           ],
           "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "client.focus",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/ClientFocusParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
         }
       ],
       "properties": {
@@ -10408,6 +10449,25 @@
                 "type",
                 "active",
                 "projection_revision"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "Number of attached client shells that accepted a `client.focus` request.",
+              "properties": {
+                "delivered": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "client_focus",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "delivered"
               ],
               "type": "object"
             },

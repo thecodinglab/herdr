@@ -3020,3 +3020,96 @@ fn navigator_foreign_workspace_heading_keeps_the_workspace_target() {
         }] if activated == &endpoint_id && workspace_id == "ws_1"
     ));
 }
+
+fn focus_request(
+    workspace_id: &str,
+    endpoint: Option<&str>,
+) -> crate::protocol::endpoint::EndpointClientFocus {
+    crate::protocol::endpoint::EndpointClientFocus {
+        workspace_id: workspace_id.into(),
+        endpoint: endpoint.map(str::to_owned),
+    }
+}
+
+fn focused_endpoint(outcome: &ClientShellInput) -> Option<(ClientEndpointId, String)> {
+    match outcome.actions.as_slice() {
+        [ClientShellAction::ActivateEndpoint {
+            endpoint_id,
+            target: Some(ClientEndpointFocusTarget::Workspace(workspace_id)),
+        }] => Some((endpoint_id.clone(), workspace_id.clone())),
+        _ => None,
+    }
+}
+
+#[test]
+fn local_focus_requests_resolve_local_profile_ids_and_labels() {
+    let (mut state, remote) = state_with_remote();
+    let profile_id = remote_profile().id.to_string();
+    for (endpoint, expected) in [
+        (None, ClientEndpointId::Local),
+        (Some("local"), ClientEndpointId::Local),
+        (Some(profile_id.as_str()), remote.clone()),
+        (Some("Build"), remote.clone()),
+    ] {
+        let outcome = state
+            .focus_requested_by_endpoint(&ClientEndpointId::Local, focus_request("ws_1", endpoint))
+            .expect("local server may target any endpoint");
+        assert_eq!(
+            focused_endpoint(&outcome),
+            Some((expected, "ws_1".to_string())),
+            "{endpoint:?}"
+        );
+    }
+    for unknown in ["build", "fedcba9876543210fedcba9876543210", "elsewhere"] {
+        assert!(state
+            .focus_requested_by_endpoint(
+                &ClientEndpointId::Local,
+                focus_request("ws_1", Some(unknown)),
+            )
+            .is_err());
+    }
+}
+
+#[test]
+fn remote_focus_requests_may_only_target_their_own_endpoint() {
+    let (mut state, remote) = state_with_remote();
+    let profile_id = remote_profile().id.to_string();
+    for endpoint in [None, Some(profile_id.as_str()), Some("Build")] {
+        let outcome = state
+            .focus_requested_by_endpoint(&remote, focus_request("ws_2", endpoint))
+            .expect("a remote server may focus its own workspaces");
+        assert_eq!(
+            focused_endpoint(&outcome),
+            Some((remote.clone(), "ws_2".to_string())),
+            "{endpoint:?}"
+        );
+    }
+
+    // A second saved machine must not be reachable from the first one either.
+    let mut other = remote_profile();
+    other.id = ProfileId::parse("fedcba9876543210fedcba9876543210").unwrap();
+    other.label = "Other".into();
+    state.set_endpoint_catalog(&[remote_profile(), other.clone()]);
+    for endpoint in ["local", "Other", other.id.as_str()] {
+        assert!(
+            state
+                .focus_requested_by_endpoint(&remote, focus_request("ws_1", Some(endpoint)))
+                .is_err(),
+            "{endpoint}"
+        );
+    }
+}
+
+#[test]
+fn ambiguous_machine_labels_are_refused() {
+    let (mut state, _) = state_with_remote();
+    let mut twin = remote_profile();
+    twin.id = ProfileId::parse("fedcba9876543210fedcba9876543210").unwrap();
+    state.set_endpoint_catalog(&[remote_profile(), twin]);
+    assert!(state
+        .focus_requested_by_endpoint(
+            &ClientEndpointId::Local,
+            focus_request("ws_1", Some("Build")),
+        )
+        .is_err());
+}

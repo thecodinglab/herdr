@@ -94,7 +94,7 @@ herdr pane read w1:p2 --source recent --lines 50
 | --- | --- |
 | 服务器 | `ping`、`server.stop`、`server.reload_config`、`server.agent_manifests`、`server.reload_agent_manifests` |
 | 通知 | `notification.show` |
-| 客户端 | `client.window_title.set`、`client.window_title.clear` |
+| 客户端 | `client.window_title.set`、`client.window_title.clear`、`client.focus` |
 | 会话 | `session.snapshot` |
 | 工作区 | `workspace.create`、`workspace.list`、`workspace.get`、`workspace.focus`、`workspace.rename`、`workspace.move`、`workspace.move_block`、`workspace.report_metadata`、`workspace.close` |
 | Worktree | `worktree.list`、`worktree.create`、`worktree.open`、`worktree.remove` |
@@ -265,6 +265,14 @@ herdr notification show "build failed" --body "api workspace" --position top-lef
 ```
 
 `client.window_title.clear` 把标题交还给 `ui.window_title`。响应是 `type: "client_window_title"`,带 `changed` 和 `set`、`cleared` 或 `no_foreground_client` 之一的 reason。
+
+让已连接的 TUI 客户端聚焦某个工作区，必要时切换机器：
+
+```json
+{"id":"req_focus","method":"client.focus","params":{"workspace_id":"w1","endpoint":null,"all_clients":false}}
+```
+
+服务器会把请求转发给最近活跃的已连接客户端；`all_clients: true` 时转发给所有已连接客户端。`endpoint` 可省略。省略或设为 `null` 表示收到请求的服务器上的工作区；否则使用 `local`，或已保存机器的 profile ID 或标签，以客户端看到的名称为准。来自已保存 SSH 机器、却指定了其他机器的请求会被客户端拒绝。响应是 `type: "client_focus"`，`delivered` 是接受请求的客户端数量，不支持该请求的旧客户端不计入。不带 `endpoint` 时，未知工作区返回 `workspace_not_found`。
 
 Worktree 方法把 Git 检出作为 Herdr 工作区管理。`worktree.create` 创建检出,并返回新的 `workspace`、`tab`、`root_pane` 和 `worktree` 记录。请求的分支已在本地存在时检出它;否则从请求的 base 或 `HEAD` 创建分支。`worktree.open` 打开已有检出,或返回已打开的工作区。`worktree.remove` 对关联的子工作区运行 `git worktree remove`,从不删除分支。
 

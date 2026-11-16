@@ -277,6 +277,10 @@ pub enum ResponseResult {
         active: bool,
         projection_revision: u64,
     },
+    /// Number of attached client shells that accepted a `client.focus` request.
+    ClientFocus {
+        delivered: u64,
+    },
     Ok {},
 }
 

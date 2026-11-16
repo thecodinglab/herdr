@@ -211,6 +211,7 @@ pub(super) fn do_handshake(
             surface_codecs: vec![SURFACE_CODEC_V1.into()],
             input_codecs: vec![INPUT_CODEC_V1.into()],
             blob_codecs: vec![BLOB_CODEC_V1.into()],
+            capabilities: vec![crate::protocol::endpoint::CLIENT_FOCUS_CAPABILITY.into()],
         };
         ClientMessage::EndpointControl {
             kind: ENDPOINT_HELLO_KIND.into(),
