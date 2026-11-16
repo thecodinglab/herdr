@@ -123,7 +123,7 @@ bootstrap and recovery, subscribe first, then reconcile through authoritative
 reads as described under Event subscriptions below. Events invalidate cached state; they
 cannot be unconditionally replayed over a snapshot. Call `session.snapshot`
 again after reconnecting or when the local cache may be stale. Attached worktree provenance is included on workspace
-records. Full repo worktree discovery remains `worktree.list`.
+records, together with the checkout's Git `branch` when known. Full repo worktree discovery remains `worktree.list`.
 
 From the CLI, `herdr api snapshot` prints the live `session.snapshot` response
 as JSON for clients and agents that want a simple bootstrap command.

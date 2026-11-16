@@ -1082,6 +1082,13 @@
             "agent_status": {
               "$ref": "#/schemas/event/$defs/AgentStatus"
             },
+            "branch": {
+              "description": "Git branch of the workspace checkout, when known.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "focused": {
               "type": "boolean"
             },
@@ -10580,6 +10587,13 @@
             },
             "agent_status": {
               "$ref": "#/schemas/success_response/$defs/AgentStatus"
+            },
+            "branch": {
+              "description": "Git branch of the workspace checkout, when known.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "focused": {
               "type": "boolean"

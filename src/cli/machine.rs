@@ -7,9 +7,12 @@ use serde::Serialize;
 
 use crate::client::endpoint::{EndpointCatalog, ProfileId, MAX_LABEL_BYTES};
 
+mod workspaces;
+
 const HELP: &str = "Usage:
   herdr machine list [--json]
   herdr machine status [<label-or-id>] [--json]
+  herdr machine workspaces [--json] [--timeout-ms <N>]
   herdr machine reconnect <label-or-id>
   herdr machine add <ssh-target> [--label <label>] [--remote-session <name>]
   herdr machine rename <profile-id> --label <label>
@@ -22,7 +25,9 @@ Missing or incompatible installations require approval in an interactive termina
 Changes apply automatically to open local Herdr clients.
 Removing or disabling a machine leaves its remote sessions running.
 Saved machines contain only a label, SSH target, explicit Herdr session, and enabled state.
-SSH credentials and key material remain owned by OpenSSH.";
+SSH credentials and key material remain owned by OpenSSH.
+Workspaces lists Local and every saved machine in parallel, read-only; each machine
+gets --timeout-ms (default 5000) and an unavailable machine only changes its status.";
 
 #[derive(Serialize)]
 struct MachineListRow<'a> {
@@ -38,6 +43,7 @@ pub(super) fn run_machine_command(args: &[String]) -> std::io::Result<i32> {
     match args.first().map(String::as_str) {
         Some("list") => list(&args[1..]),
         Some("status") => status(&args[1..]),
+        Some("workspaces") => workspaces::run(&args[1..]),
         Some("reconnect") => reconnect(&args[1..]),
         Some("add") => add(&args[1..]),
         Some("rename") => rename(&args[1..]),

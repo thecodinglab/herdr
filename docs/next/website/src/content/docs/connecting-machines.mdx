@@ -81,7 +81,7 @@ herdr machine enable <profile-id>
 herdr machine remove <profile-id>
 ```
 
-For scripts, add `--json` to `machine list`.
+For scripts, add `--json` to `machine list`. `herdr machine workspaces [--json]` lists the workspaces of Local and every saved machine at once, querying them in parallel with a per-machine timeout; see the [CLI reference](/docs/cli-reference/#saved-ssh-machines) for its JSON fields.
 
 Renaming changes the displayed label without reconnecting. Disabling keeps the profile for later; removing forgets it. Both disconnect only that machine from the client and leave its remote sessions and agents running, even if the host is unreachable.
 

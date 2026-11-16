@@ -51,6 +51,7 @@ herdr api schema --output herdr-api.schema.json
 
 ```bash
 herdr machine list
+herdr machine workspaces --json
 herdr machine add workbox
 herdr machine add workbox --label "Build machine"
 herdr machine rename <profile-id> --label "New name"
@@ -67,6 +68,8 @@ herdr machine remove <profile-id>
 
 `herdr machine status [<label-or-id>] [--json]` は SSH とリモート Herdr を非対話式で確認します。`reachable` は今回の確認結果で、TUI の接続状態ではありません。ターミナルで `herdr machine reconnect <label-or-id>` を実行すると認証と検証を行いますが、インストールや更新は行いません。開いているクライアントは 30 秒以内に再試行します。`! auth` または `! error` をクリックすると再試行し、失敗した場合は最新のエラーと CLI コマンドを表示します。折りたたみ時は `!` です。対応環境は [SSH 認証の復旧](/ja/docs/connecting-machines/#ssh-認証の復旧)を参照してください。セットアップには `herdr --remote workbox` を使い、名前付きセッションの場合だけ `--session <name>` を追加します。
 
+`herdr machine workspaces [--json] [--timeout-ms <N>]` は、Local と保存済みのすべてのマシンのワークスペースを読み取り専用で一度に一覧表示します。各マシンは共有 SSH 接続で並列に問い合わせ、それぞれ `--timeout-ms`(既定 5000)で打ち切ります。サーバーは起動せず、利用できないマシンは自身の `status` だけが変わります(`ok`、ローカルサーバー停止時の `offline`、`disabled`、`auth_required`、`timeout`、プロトコル不一致を含む `error`)。保存済みマシンの一覧を読めれば終了コードは 0 です。`--json` は Local を先頭に、続いて一覧順の保存済みマシンを `{"machines":[...]}` として出力します。各マシンには `id`(`local` またはプロファイル ID)、`label`、`kind`、`status`、`error`、`elapsed_ms`、`workspaces` があり、各ワークスペースには `workspace_id`、`number`、`label`、`focused`、`agent_status`、`agent_title`(最も緊急度の高いエージェントのターミナルタイトル)、`tab_count`、`cwd`(そのマシン上でフォーカス中のペインのディレクトリ)、`branch`、`worktree` があります。不明な値は `null` です。
+
 ワークスペース、タブ、ペインの ID とエージェント名はサーバーごとに独立しています。UI での選択は CLI の接続先を変えません。保存済み SSH マシンへ API コマンドを送るには、グローバルな**プレフィックス** `--machine <label-or-id>` を指定します。
 
 ```bash
@@ -82,7 +85,7 @@ herdr --machine "Build machine" worktree create --cwd /srv/project --branch revi
 
 JSON API を非対話 SSH で転送します。API の内容を SSH のシェルコマンドに埋め込むことはありません。開いた TUI は不要で、サーバーのインストール・起動・再起動も自動では行いません。ローカル CLI とリモート Herdr を更新し、実行中サーバーの API プロトコルとの互換性を保ってください。認証、接続、互換性のエラーで Local にフォールバックしたり、要求を自動再送したりすることはありません。
 
-呼び出し元のローカルペイン ID は継承しません。リモート ID を明示してください。`--current` でローカルペインを指定することはできません。リモート worktree パスには絶対パス、`~`、または `~/` で始まるパスを指定します（サーバー側で展開）。プラグインの link パスは絶対パスが必要です。対象は 1 台ずつで、一覧の統合や別の TUI の接続を使った転送は含みません。
+呼び出し元のローカルペイン ID は継承しません。リモート ID を明示してください。`--current` でローカルペインを指定することはできません。リモート worktree パスには絶対パス、`~`、または `~/` で始まるパスを指定します（サーバー側で展開）。プラグインの link パスは絶対パスが必要です。対象は 1 台ずつで、別の TUI の接続を使った転送は含みません。ワークスペースをまとめて一覧するには `herdr machine workspaces` を使います。
 
 ## シェル補完
 
