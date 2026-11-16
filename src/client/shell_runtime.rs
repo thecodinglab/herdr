@@ -585,6 +585,31 @@ pub(super) fn present_handoff_unavailable(
     }
 }
 
+/// Apply one Local popup overlay surface and present the result. The overlay is client-owned
+/// chrome over the presented machine: it repaints through that machine's unavailable freeze,
+/// whose pane cells stay the last coherent surface. A pending endpoint handoff still holds it.
+pub(super) fn present_local_popup_overlay_surface(
+    state: &mut ClientState,
+    generation: u64,
+    surface: crate::protocol::PaneSurfaceFrame,
+    activation_pending: bool,
+) {
+    let composed = state.shell.as_mut().and_then(|shell| {
+        shell
+            .receive_local_popup_overlay_surface(generation, surface)
+            .then(|| shell.compose(state.reported_size.0, state.reported_size.1))
+            .flatten()
+    });
+    let Some(frame) = composed else {
+        return;
+    };
+    if activation_pending {
+        state.present_frame(frame);
+    } else {
+        state.present_frozen_chrome(frame);
+    }
+}
+
 pub(super) fn rollback_endpoint_activation(
     state: &mut ClientState,
     endpoints: &mut endpoint::EndpointRegistry,
@@ -1147,6 +1172,123 @@ mod tests {
                 .iter()
                 .all(|message| matches!(message, ClientMessage::ClientShellResize { .. })),
             "{remote:?}"
+        );
+    }
+
+    /// The presented machine dropping freezes its presentation, but the Local popup overlay keeps
+    /// running: its new frames must still reach the terminal while its input goes to Local.
+    #[test]
+    fn local_popup_overlay_repaints_while_the_presented_machine_is_unavailable() {
+        #[derive(Clone)]
+        struct Capture(std::sync::Arc<std::sync::Mutex<Vec<ClientMessage>>>);
+
+        impl endpoint::EndpointTransport for Capture {
+            fn send(&mut self, message: &ClientMessage) -> std::io::Result<()> {
+                self.0.lock().unwrap().push(message.clone());
+                Ok(())
+            }
+        }
+
+        let local_sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut endpoints = endpoint::EndpointRegistry::new(
+            Capture(local_sent.clone()),
+            1,
+            endpoint::EndpointNegotiation::new(Vec::new(), Vec::new()),
+        );
+        let remote = endpoint::ClientEndpointId::Ssh(
+            endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        );
+        endpoints.insert(
+            remote.clone(),
+            Capture(Default::default()),
+            2,
+            endpoint::EndpointNegotiation::default(),
+            true,
+        );
+        assert!(endpoints.set_active(&remote));
+        endpoints.disconnect(&remote);
+        let mut state = ClientState::test_new();
+        state
+            .shell
+            .as_mut()
+            .unwrap()
+            .test_set_local_popup_overlay("terminal-local");
+        // What handle_endpoint_disconnect leaves behind for the presented machine.
+        state.freeze_presentation();
+
+        let popup_frame = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
+            &ratatui::buffer::Buffer::with_lines(["changed", "", ""]),
+            None,
+            &[],
+        );
+        let surface = crate::protocol::PaneSurfaceFrame {
+            boot_id: "boot".into(),
+            projection_revision: 1,
+            surface_revision: 2,
+            frame: crate::protocol::FrameData {
+                cells: Vec::new(),
+                width: 0,
+                height: 0,
+                cursor: None,
+                hyperlinks: Vec::new(),
+                graphics: Vec::new(),
+            },
+            panes: Vec::new(),
+            splits: Vec::new(),
+            popup: Some(Box::new(crate::protocol::ClientShellPopupSurface {
+                terminal_id: "terminal-local".into(),
+                title: "local".into(),
+                width: None,
+                height: None,
+                frame: popup_frame,
+                mouse_reporting: false,
+                sgr_pixel_mouse: false,
+                pixel_width: 0,
+                pixel_height: 0,
+            })),
+            graphics: Default::default(),
+        };
+        state.request_repaint();
+        present_local_popup_overlay_surface(&mut state, 1, surface, false);
+        assert!(
+            !state.repaint_pending,
+            "the overlay frame must be presented through the unavailable freeze"
+        );
+        assert!(state.presentation_frozen);
+
+        let mut pending_activation = None;
+        let mut endpoint_commands = endpoint_commands::EndpointCommands::default();
+        let mut prefix_input_source = crate::platform::RealPrefixInputSource::default();
+        let mut scheduled_activation = None;
+        let frame = state.shell.as_mut().unwrap().compose(100, 30);
+        assert!(frame.is_some());
+        state.request_repaint();
+        finish_client_shell_input(
+            &mut state,
+            shell::ClientShellInput {
+                requests: vec![ClientMessage::ClientShellPopupInput {
+                    terminal_id: "terminal-local".into(),
+                    events: vec![crate::protocol::ClientPaneInputEvent::Paste("x".into())],
+                }],
+                ..Default::default()
+            },
+            frame,
+            &mut endpoints,
+            &mut pending_activation,
+            &mut endpoint_commands,
+            &mut prefix_input_source,
+            &mut scheduled_activation,
+        )
+        .unwrap();
+        assert!(!state.repaint_pending);
+        let local = local_sent.lock().unwrap();
+        assert!(
+            matches!(
+                local.as_slice(),
+                [ClientMessage::ClientShellPopupInput { terminal_id, .. }]
+                    if terminal_id == "terminal-local"
+            ),
+            "{local:?}"
         );
     }
 }

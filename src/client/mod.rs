@@ -1581,21 +1581,16 @@ async fn run_client_loop(
                             continue;
                         }
                         if local_popup_overlay {
-                            let composed = state.shell.as_mut().and_then(|shell| {
-                                shell
-                                    .receive_local_popup_overlay_surface(generation, surface)
-                                    .then(|| {
-                                        shell.compose(state.reported_size.0, state.reported_size.1)
-                                    })
-                                    .flatten()
-                            });
+                            present_local_popup_overlay_surface(
+                                &mut state,
+                                generation,
+                                surface,
+                                pending_activation.is_some(),
+                            );
                             apply_client_shell_input_source_changes(
                                 &mut state,
                                 &mut prefix_input_source,
                             );
-                            if let Some(frame) = composed {
-                                state.present_frame(frame);
-                            }
                             continue;
                         }
                         if !endpoint_active {

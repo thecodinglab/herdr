@@ -1837,16 +1837,11 @@ impl ClientShellState {
             .popup_pending_deadline
             .is_some_and(|deadline| now >= deadline)
         {
+            // Only release blocked input. A local popup overlay stays owned until Local sends
+            // its closing popup-less surface or disconnects: a missing first frame does not mean
+            // the popup ended, e.g. while it holds synchronized output.
             self.popup_pending = false;
             self.popup_pending_deadline = None;
-            // An acknowledged local overlay that never produced a frame already ended.
-            if self
-                .local_popup_overlay
-                .as_ref()
-                .is_some_and(|overlay| overlay.request_id.is_none() && overlay.popup.is_none())
-            {
-                self.clear_local_popup_overlay();
-            }
         }
     }
 

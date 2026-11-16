@@ -52,6 +52,14 @@ impl ClientShellState {
             .map(|popup| popup.terminal_id.as_str())
     }
 
+    /// Whether the composed popup hit target is the local popup overlay.
+    pub(super) fn local_popup_overlay_hit(&self) -> bool {
+        self.hits
+            .popup
+            .as_ref()
+            .is_some_and(|hit| self.local_popup_overlay_terminal_id() == Some(hit.pane_id.as_str()))
+    }
+
     pub(crate) fn owns_local_popup_overlay_request(&self, request_id: &str) -> bool {
         self.local_popup_overlay
             .as_ref()

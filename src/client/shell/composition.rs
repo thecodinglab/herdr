@@ -144,7 +144,20 @@ impl ClientShellState {
                 &self.config.palette,
             );
         }
-        FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, None, &[])
+        let mut frame = FrameData::from_ratatui_buffer_with_hyperlinks(&buffer, None, &[]);
+        // The local popup overlay runs on Local and stays usable while the presented machine
+        // is unavailable or has no presentable surface.
+        if let Some(popup) = self
+            .local_popup_overlay
+            .as_ref()
+            .and_then(|overlay| overlay.popup.as_deref())
+            .filter(|_| !self.active_endpoint_id.is_local())
+        {
+            self.hits.popup =
+                draw_client_popup(&mut frame, popup, layout.pane_surface, &self.config.palette)
+                    .flatten();
+        }
+        frame
     }
 
     pub(crate) fn compose(
@@ -560,44 +573,15 @@ impl ClientShellState {
         }
         self.hits.popup = None;
         // A local popup overlay is drawn over the presented machine, including its own popup.
-        let popup = self
+        let local_overlay_popup = self
             .local_popup_overlay
             .as_ref()
-            .and_then(|overlay| overlay.popup.as_deref())
-            .or(surface.popup.as_deref());
-        if let Some(popup) = popup {
-            let width = popup.width.map(client_popup_size);
-            let height = popup.height.map(client_popup_size);
-            if let Some(geometry) =
-                crate::popup_size::resolve_popup_geometry(width, height, layout.pane_surface)
-            {
-                occlusion.start_popup(geometry.outer);
-                let mut composed = frame.to_ratatui_buffer()?;
-                let block = ratatui::widgets::Block::default()
-                    .borders(ratatui::widgets::Borders::ALL)
-                    .border_style(ratatui::style::Style::default().fg(self.config.palette.accent))
-                    .title(popup.title.clone())
-                    .style(ratatui::style::Style::default().bg(self.config.palette.panel_bg));
-                ratatui::widgets::Widget::render(
-                    ratatui::widgets::Clear,
-                    geometry.outer,
-                    &mut composed,
-                );
-                ratatui::widgets::Widget::render(block, geometry.outer, &mut composed);
-                frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
-                blit_pane_surface(&mut frame, &popup.frame, geometry.inner);
-                self.hits.popup = Some(PaneHit {
-                    rect: geometry.outer,
-                    inner_rect: geometry.inner,
-                    scrollbar_rect: None,
-                    scroll: None,
-                    pane_id: popup.terminal_id.clone(),
-                    popup: true,
-                    mouse_reporting: popup.mouse_reporting,
-                    sgr_pixel_mouse: popup.sgr_pixel_mouse,
-                    pixel_width: popup.pixel_width,
-                    pixel_height: popup.pixel_height,
-                });
+            .and_then(|overlay| overlay.popup.as_deref());
+        if let Some(popup) = local_overlay_popup.or(surface.popup.as_deref()) {
+            self.hits.popup =
+                draw_client_popup(&mut frame, popup, layout.pane_surface, &self.config.palette)?;
+            if let Some(hit) = self.hits.popup.as_ref() {
+                occlusion.start_popup(hit.rect);
             }
         }
         if !layout.mobile_header.is_empty()
@@ -721,10 +705,13 @@ impl ClientShellState {
                 .min(u16::try_from(self.hits.release_notes_max_scroll).unwrap_or(u16::MAX));
         }
         if self.endpoint_status(&self.active_endpoint_id) != Some(ClientEndpointStatus::Online) {
-            frame.cursor = None;
             self.hits.panes.clear();
             self.hits.pane_splits.clear();
-            self.hits.popup = None;
+            // The local popup overlay runs on Local, not on the unavailable presented machine.
+            if !self.local_popup_overlay_hit() {
+                frame.cursor = None;
+                self.hits.popup = None;
+            }
         }
         let graphics = self.compose_graphics(layout, &occlusion);
         Some(crate::client::frame_output::ComposedFrame { frame, graphics })
@@ -818,4 +805,41 @@ fn client_popup_size(size: crate::protocol::ClientShellPopupSize) -> crate::popu
             crate::popup_size::PopupSize::Percent(percent)
         }
     }
+}
+
+/// Draw `popup` framed inside `area`. Returns `None` when the frame cannot be edited, and
+/// `Some(None)` when the popup does not fit `area`; otherwise its hit target.
+fn draw_client_popup(
+    frame: &mut FrameData,
+    popup: &crate::protocol::ClientShellPopupSurface,
+    area: Rect,
+    palette: &Palette,
+) -> Option<Option<PaneHit>> {
+    let width = popup.width.map(client_popup_size);
+    let height = popup.height.map(client_popup_size);
+    let Some(geometry) = crate::popup_size::resolve_popup_geometry(width, height, area) else {
+        return Some(None);
+    };
+    let mut composed = frame.to_ratatui_buffer()?;
+    let block = ratatui::widgets::Block::default()
+        .borders(ratatui::widgets::Borders::ALL)
+        .border_style(ratatui::style::Style::default().fg(palette.accent))
+        .title(popup.title.clone())
+        .style(ratatui::style::Style::default().bg(palette.panel_bg));
+    ratatui::widgets::Widget::render(ratatui::widgets::Clear, geometry.outer, &mut composed);
+    ratatui::widgets::Widget::render(block, geometry.outer, &mut composed);
+    frame.replace_from_ratatui_buffer_preserving_effects(&composed, None);
+    blit_pane_surface(frame, &popup.frame, geometry.inner);
+    Some(Some(PaneHit {
+        rect: geometry.outer,
+        inner_rect: geometry.inner,
+        scrollbar_rect: None,
+        scroll: None,
+        pane_id: popup.terminal_id.clone(),
+        popup: true,
+        mouse_reporting: popup.mouse_reporting,
+        sgr_pixel_mouse: popup.sgr_pixel_mouse,
+        pixel_width: popup.pixel_width,
+        pixel_height: popup.pixel_height,
+    }))
 }

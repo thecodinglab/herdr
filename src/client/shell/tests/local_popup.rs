@@ -408,3 +408,73 @@ fn client_focus_from_the_local_popup_closes_it_and_navigates() {
         }]
     ));
 }
+
+/// A local popup may withhold its first frame past the pending-input deadline, e.g. while it
+/// holds synchronized output. The client must keep owning it rather than infer that it ended.
+#[test]
+fn late_first_local_popup_frame_keeps_the_overlay() {
+    let (mut state, _) = state_viewing_remote();
+    let outcome = press_local_popup_key(&mut state);
+    let [ClientShellAction::LocalPopupOverlay(request)] = outcome.actions.as_slice() else {
+        panic!("expected a local overlay request");
+    };
+    let request_id = request.request.id.clone();
+    assert!(!state.handle_local_popup_overlay_result(
+        &request_id,
+        Ok(crate::api::schema::ResponseResult::Ok {})
+    ));
+    let deadline = state.popup_pending_deadline.expect("first-frame deadline");
+
+    state.tick_popup_pending(deadline);
+
+    // Remote input is released, but the overlay is still Local's to finish.
+    assert!(!state.popup_pending);
+    assert!(state.local_popup_overlay_active());
+    assert!(state.accepts_local_popup_overlay_surface(1));
+    assert!(state.receive_local_popup_overlay_surface(1, overlay_surface(Some("LATEPOP"))));
+    let rows = frame_rows(&state.compose(100, 28).unwrap().frame).join("\n");
+    assert!(rows.contains("LATEPOP"), "{rows}");
+    let input = press(&mut state, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert!(matches!(
+        input.requests.as_slice(),
+        [ClientMessage::ClientShellPopupInput { terminal_id, .. }] if terminal_id == "terminal-local"
+    ));
+    // The overlay can still be ended by Local's closing surface.
+    assert!(state.receive_local_popup_overlay_surface(1, overlay_surface(None)));
+    assert!(!state.local_popup_overlay_active());
+}
+
+/// The local popup runs independently of the presented machine. When that machine drops, the
+/// overlay keeps drawing over the unavailable view and keeps its mouse target.
+#[test]
+fn local_popup_overlay_survives_the_presented_machine_disconnecting() {
+    let (mut state, remote) = state_viewing_remote();
+    open_overlay(&mut state);
+
+    state.mark_endpoint_disconnected(&remote);
+    assert!(state.local_popup_overlay_active());
+    assert!(state.receive_local_popup_overlay_surface(1, overlay_surface(Some("STILLPOP"))));
+    let rows = frame_rows(&state.compose(100, 28).unwrap().frame).join("\n");
+    assert!(rows.contains("STILLPOP"), "{rows}");
+    assert!(state
+        .hits
+        .popup
+        .as_ref()
+        .is_some_and(|hit| hit.pane_id == "terminal-local"));
+
+    // A resize during the outage drops the remote pane surface; the overlay stays drawn.
+    state.invalidate_pane_surface();
+    assert!(state.receive_local_popup_overlay_surface(1, overlay_surface(Some("RESIZED"))));
+    let rows = frame_rows(&state.compose(90, 24).unwrap().frame).join("\n");
+    assert!(rows.contains("RESIZED"), "{rows}");
+    assert!(state
+        .hits
+        .popup
+        .as_ref()
+        .is_some_and(|hit| hit.pane_id == "terminal-local"));
+    let input = press(&mut state, KeyCode::Char('x'), KeyModifiers::NONE);
+    assert!(matches!(
+        input.requests.as_slice(),
+        [ClientMessage::ClientShellPopupInput { terminal_id, .. }] if terminal_id == "terminal-local"
+    ));
+}
