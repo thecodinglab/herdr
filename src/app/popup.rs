@@ -12,6 +12,15 @@ pub(crate) struct PopupGeometry {
     pub height: Option<PopupSize>,
 }
 
+/// Where a popup is presented while it starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PopupPlacement {
+    /// Over the active workspace, which must exist.
+    ActiveWorkspace,
+    /// Over a client shell that presents another machine; the area is that client's surface.
+    Overlay(ratatui::layout::Rect),
+}
+
 impl App {
     pub(crate) fn close_popup_pane(&mut self) -> bool {
         let Some(popup) = self.state.popup_pane.take() else {
@@ -39,10 +48,28 @@ impl App {
         extra_env: Vec<(String, String)>,
         geometry: PopupGeometry,
     ) -> std::io::Result<()> {
+        self.spawn_popup_shell_command_at(
+            command,
+            cwd,
+            extra_env,
+            geometry,
+            PopupPlacement::ActiveWorkspace,
+        )
+    }
+
+    pub(crate) fn spawn_popup_shell_command_at(
+        &mut self,
+        command: &str,
+        cwd: Option<PathBuf>,
+        extra_env: Vec<(String, String)>,
+        geometry: PopupGeometry,
+        placement: PopupPlacement,
+    ) -> std::io::Result<()> {
         self.spawn_popup_command(
             cwd,
             extra_env,
             geometry,
+            placement,
             |pane_id, rows, cols, cwd, launch_env, app| {
                 TerminalRuntime::spawn_shell_command(
                     pane_id,
@@ -75,6 +102,7 @@ impl App {
             cwd,
             extra_env,
             geometry,
+            PopupPlacement::ActiveWorkspace,
             |pane_id, rows, cols, cwd, launch_env, app| {
                 TerminalRuntime::spawn_argv_command(
                     pane_id,
@@ -101,6 +129,7 @@ impl App {
         cwd: Option<PathBuf>,
         extra_env: Vec<(String, String)>,
         geometry: PopupGeometry,
+        placement: PopupPlacement,
         spawn: F,
     ) -> std::io::Result<()>
     where
@@ -116,28 +145,40 @@ impl App {
         if self.state.popup_pane.is_some() {
             return Err(std::io::Error::other("popup already open"));
         }
-        let Some(ws_idx) = self.state.active else {
-            return Err(std::io::Error::other("no active workspace"));
+        let cwd = match placement {
+            PopupPlacement::ActiveWorkspace => {
+                let Some(ws_idx) = self.state.active else {
+                    return Err(std::io::Error::other("no active workspace"));
+                };
+                let ws = self
+                    .state
+                    .workspaces
+                    .get(ws_idx)
+                    .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
+                let active_tab = ws
+                    .active_tab()
+                    .ok_or_else(|| std::io::Error::other("active tab disappeared"))?;
+                let focused_pane = ws
+                    .focused_pane_id()
+                    .ok_or_else(|| std::io::Error::other("active tab has no focused pane"))?;
+                cwd.or_else(|| {
+                    active_tab.cwd_for_pane(
+                        focused_pane,
+                        &self.state.terminals,
+                        &self.terminal_runtimes,
+                    )
+                })
+            }
+            // An overlay presents another machine; it needs no local workspace.
+            PopupPlacement::Overlay(_) => cwd,
         };
-        let ws = self
-            .state
-            .workspaces
-            .get(ws_idx)
-            .ok_or_else(|| std::io::Error::other("active workspace disappeared"))?;
-        let active_tab = ws
-            .active_tab()
-            .ok_or_else(|| std::io::Error::other("active tab disappeared"))?;
-        let focused_pane = ws
-            .focused_pane_id()
-            .ok_or_else(|| std::io::Error::other("active tab has no focused pane"))?;
-        let cwd = cwd.or_else(|| {
-            active_tab.cwd_for_pane(focused_pane, &self.state.terminals, &self.terminal_runtimes)
-        });
         let cwd = cwd.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| "/".into()));
         let pane_id = PaneId::alloc();
         let terminal_id = TerminalId::alloc();
         let launch_env = PaneLaunchEnv::from_extra(extra_env).without_pane_identity();
-        let terminal_area = if self.state.view.terminal_area.width >= 4
+        let terminal_area = if let PopupPlacement::Overlay(area) = placement {
+            area
+        } else if self.state.view.terminal_area.width >= 4
             && self.state.view.terminal_area.height >= 4
         {
             self.state.view.terminal_area
@@ -165,7 +206,9 @@ impl App {
             width: geometry.width,
             height: geometry.height,
         });
-        self.state.mode = Mode::Terminal;
+        if placement == PopupPlacement::ActiveWorkspace {
+            self.state.mode = Mode::Terminal;
+        }
         Ok(())
     }
 }

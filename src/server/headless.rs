@@ -81,6 +81,7 @@ mod endpoint_requests;
 mod lifecycle;
 mod native_graphics;
 mod notifications;
+mod popup_overlay;
 mod render;
 mod retained_surface;
 mod surface_interest;
@@ -213,6 +214,9 @@ pub struct HeadlessServer {
     tab_geometry_controllers: HashMap<String, u64>,
     /// Stable tab id whose viewers may see and interact with the one terminal popup.
     popup_owner_tab_id: Option<String>,
+    /// Client shell presenting another machine that owns the popup as a local overlay.
+    /// While set, only that client sees and drives the popup.
+    popup_overlay: Option<popup_overlay::PopupOverlayOwner>,
     /// Process-local identity used to reject shell replacements from an earlier server boot.
     client_shell_boot_id: String,
     /// Outer window title last pushed, paired with the client that received it.
@@ -367,6 +371,7 @@ impl HeadlessServer {
             foreground_client_id: None,
             tab_geometry_controllers: HashMap::new(),
             popup_owner_tab_id: None,
+            popup_overlay: None,
             client_shell_boot_id: format!(
                 "{}-{}",
                 std::process::id(),
@@ -964,6 +969,7 @@ impl HeadlessServer {
         });
         let was_foreground = self.foreground_client_id == Some(client_id);
         let removed = self.clients.remove(&client_id);
+        self.retire_popup_overlay_client(client_id);
         self.tab_geometry_controllers
             .retain(|_, controller_id| *controller_id != client_id);
         if let Some(mut removed) = removed {
@@ -1202,8 +1208,8 @@ impl HeadlessServer {
                 else {
                     return false;
                 };
-                let popup_blocks_input = self.app.state.popup_pane.is_some()
-                    && self.popup_owner_tab_id == self.shell_tab_id_for_client(client_id);
+                let popup_blocks_input =
+                    self.app.state.popup_pane.is_some() && self.client_sees_popup(client_id);
                 if popup_blocks_input
                     || !self.shell_client_views_pane(client_id, workspace_index, runtime_pane_id)
                 {
@@ -1244,9 +1250,7 @@ impl HeadlessServer {
                 else {
                     return false;
                 };
-                if popup_terminal_id.as_str() != terminal_id
-                    || self.popup_owner_tab_id != self.shell_tab_id_for_client(client_id)
-                {
+                if popup_terminal_id.as_str() != terminal_id || !self.client_sees_popup(client_id) {
                     return false;
                 }
                 let foreground_changed = self.promote_client_to_foreground(client_id);
@@ -2015,7 +2019,10 @@ impl HeadlessServer {
                 connection.shell_agent_completions = Some(completion_projection);
                 connection.shell_agent_view = agent_view;
                 self.clients.insert(client_id, connection);
-                if self.app.state.popup_pane.is_some() && self.popup_owner_tab_id.is_none() {
+                if self.app.state.popup_pane.is_some()
+                    && self.popup_owner_tab_id.is_none()
+                    && self.popup_overlay.is_none()
+                {
                     self.popup_owner_tab_id = self.shell_tab_id_for_client(client_id);
                 }
                 if let Some(message) = projection_message {
@@ -2253,7 +2260,8 @@ impl HeadlessServer {
                 }
                 client.pixel_mouse = pixel_mouse && observed.is_known();
                 if !client.shell_surface_active {
-                    return false;
+                    // The overlay popup follows its client's surface size.
+                    return self.is_popup_overlay_client(client_id);
                 }
                 client.request_repaint();
                 self.promote_client_to_foreground(client_id);
@@ -2394,8 +2402,8 @@ impl HeadlessServer {
                     runtime.current_size(),
                     runtime.pixel_size(),
                 );
-                let popup_blocks_input = self.app.state.popup_pane.is_some()
-                    && self.popup_owner_tab_id == self.shell_tab_id_for_client(client_id);
+                let popup_blocks_input =
+                    self.app.state.popup_pane.is_some() && self.client_sees_popup(client_id);
                 if popup_blocks_input
                     || !self.shell_client_views_pane(client_id, workspace_index, runtime_pane_id)
                 {
@@ -2463,11 +2471,14 @@ impl HeadlessServer {
                 terminal_id,
                 events,
             } => {
+                // A local overlay client presents another machine, so its surface is inactive.
+                let overlay_client = self.is_popup_overlay_client(client_id);
                 if self.handoff_in_progress
-                    || !self
-                        .clients
-                        .get(&client_id)
-                        .is_some_and(ClientConnection::is_active_shell_client)
+                    || !(overlay_client
+                        || self
+                            .clients
+                            .get(&client_id)
+                            .is_some_and(ClientConnection::is_active_shell_client))
                 {
                     return false;
                 }
@@ -2496,7 +2507,7 @@ impl HeadlessServer {
                     runtime.current_size(),
                     runtime.pixel_size(),
                 );
-                if self.popup_owner_tab_id != self.shell_tab_id_for_client(client_id) {
+                if !self.client_sees_popup(client_id) {
                     let releases = events
                         .into_iter()
                         .filter(client_pane_input_releases_press)
@@ -2524,9 +2535,10 @@ impl HeadlessServer {
                     );
                 }
                 let foreground_changed =
-                    interaction && self.promote_client_to_foreground(client_id);
-                let geometry_changed =
-                    interaction && self.claim_shell_tab_geometry(client_id, false);
+                    interaction && !overlay_client && self.promote_client_to_foreground(client_id);
+                let geometry_changed = interaction
+                    && !overlay_client
+                    && self.claim_shell_tab_geometry(client_id, false);
                 let Some(runtime) = self.app.terminal_runtimes.get(&popup_terminal_id) else {
                     return foreground_changed | geometry_changed;
                 };

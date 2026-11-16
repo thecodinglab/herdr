@@ -6,6 +6,8 @@ mod event_fairness;
 mod native_graphics;
 #[path = "pane_move.rs"]
 mod pane_move_tests;
+#[path = "popup_overlay.rs"]
+mod popup_overlay_tests;
 #[path = "pane_graphics.rs"]
 mod retained_graphics_tests;
 #[path = "surface_delta.rs"]
@@ -118,6 +120,7 @@ fn test_headless_server_with_event_hub(event_hub: api::EventHub) -> HeadlessServ
         foreground_client_id: None,
         tab_geometry_controllers: HashMap::new(),
         popup_owner_tab_id: None,
+        popup_overlay: None,
         client_shell_boot_id: "test-boot".into(),
         sent_window_title: None,
         api_window_title: None,

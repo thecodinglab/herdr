@@ -135,7 +135,7 @@ impl HeadlessServer {
         {
             self.popup_owner_tab_id = None;
             self.app.close_popup_pane();
-        } else if self.popup_owner_tab_id.is_none() {
+        } else if self.popup_owner_tab_id.is_none() && self.popup_overlay.is_none() {
             self.popup_owner_tab_id = self
                 .default_shell_target()
                 .and_then(|target| self.tab_id_for_target(target));

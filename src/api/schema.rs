@@ -146,6 +146,8 @@ operations::define_operations! {
     PluginPaneFocus(PluginPaneFocusParams) => "plugin.pane.focus", true, false;
     PluginPaneClose(PluginPaneCloseParams) => "plugin.pane.close", true, false;
     ClientFocus(ClientFocusParams) => "client.focus", false, false;
+    ClientShellPopupOverlayOpen(ClientShellPopupOverlayOpenParams) => "client_shell.popup_overlay.open", true, true;
+    ClientShellPopupOverlayClose(EmptyParams) => "client_shell.popup_overlay.close", true, true;
 }
 
 #[cfg(test)]

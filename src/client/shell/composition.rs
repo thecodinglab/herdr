@@ -559,7 +559,13 @@ impl ClientShellState {
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
         }
         self.hits.popup = None;
-        if let Some(popup) = surface.popup.as_deref() {
+        // A local popup overlay is drawn over the presented machine, including its own popup.
+        let popup = self
+            .local_popup_overlay
+            .as_ref()
+            .and_then(|overlay| overlay.popup.as_deref())
+            .or(surface.popup.as_deref());
+        if let Some(popup) = popup {
             let width = popup.width.map(client_popup_size);
             let height = popup.height.map(client_popup_size);
             if let Some(geometry) =

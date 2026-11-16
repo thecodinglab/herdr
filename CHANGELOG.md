@@ -5,6 +5,7 @@
 ### Added
 - `herdr machine workspaces [--json]` lists the workspaces of Local and every saved SSH machine in one read-only call. Machines are queried in parallel with a per-machine `--timeout-ms` (default 5000), and an offline, disabled, unauthenticated, slow, or incompatible machine only changes its own status. Workspace records from the API now include the checkout's Git `branch` when known.
 - `herdr client focus <workspace_id>` asks the attached Herdr client to show a workspace, switching to another saved machine with `--endpoint`. It works from a pane, a popup, or a plain terminal. Only the most recently active client gets the request unless you pass `--all-clients`. A request from a saved SSH machine can only focus that machine's own workspaces.
+- Popup commands can set `run_on = "local"` to run on the local machine while you view an SSH machine. The popup is drawn over the remote view without switching machines, and gets `HERDR_VIEW_ENDPOINT`, `HERDR_VIEW_ENDPOINT_LABEL`, `HERDR_VIEW_WORKSPACE_ID`, `HERDR_VIEW_TAB_ID`, `HERDR_VIEW_PANE_ID` and `HERDR_VIEW_PANE_CWD` describing what you were viewing.
 
 ## [0.9.5] - 2026-10-14
 

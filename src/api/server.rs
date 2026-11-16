@@ -579,6 +579,17 @@ fn handle_request(
         );
     }
 
+    if matches!(
+        &request.method,
+        Method::ClientShellPopupOverlayOpen(_) | Method::ClientShellPopupOverlayClose(_)
+    ) {
+        return error_response_json(
+            request.id,
+            "connection_local_only",
+            "client_shell.popup_overlay is only available through a client shell endpoint".into(),
+        );
+    }
+
     if matches!(&request.method, Method::ServerStop(_)) {
         if let Some(server_stop) = server_stop {
             server_stop.request(ShutdownReason::ApiStop {

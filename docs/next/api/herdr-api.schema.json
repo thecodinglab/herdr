@@ -1727,6 +1727,67 @@
           ],
           "type": "object"
         },
+        "ClientShellPopupOverlayOpenParams": {
+          "description": "Opens a local `run_on = \"local\"` popup command as an overlay for the requesting client shell,\nwhich may currently present another machine.",
+          "properties": {
+            "command_id": {
+              "description": "Opaque endpoint-issued command identifier from this server's client-shell projection.",
+              "type": "string"
+            },
+            "view": {
+              "$ref": "#/schemas/request/$defs/ClientShellPopupOverlayView",
+              "description": "The context the client presents while the popup runs."
+            }
+          },
+          "required": [
+            "command_id",
+            "view"
+          ],
+          "type": "object"
+        },
+        "ClientShellPopupOverlayView": {
+          "description": "Focus context of the machine a client shell presents, exported to a local popup process.",
+          "properties": {
+            "endpoint_id": {
+              "description": "`local` or the saved machine profile id.",
+              "type": "string"
+            },
+            "endpoint_label": {
+              "description": "`local` or the saved machine label.",
+              "type": "string"
+            },
+            "pane_cwd": {
+              "description": "Focused pane working directory, as a path on the presented machine.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tab_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "workspace_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "endpoint_id",
+            "endpoint_label"
+          ],
+          "type": "object"
+        },
         "ClientShellSurfaceSetParams": {
           "description": "Updates whether the requesting client shell receives and controls pane presentation.",
           "properties": {
@@ -6353,6 +6414,38 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/ClientFocusParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "client_shell.popup_overlay.open",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/ClientShellPopupOverlayOpenParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "client_shell.popup_overlay.close",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/EmptyParams"
             }
           },
           "required": [

@@ -494,7 +494,7 @@ pub(super) fn render_pane_surface(
     })
 }
 
-fn render_popup_surface(
+pub(super) fn render_popup_surface(
     app: &app::App,
     area: Rect,
     resize_runtime: bool,

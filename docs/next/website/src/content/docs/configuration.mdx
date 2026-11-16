@@ -225,6 +225,39 @@ height = "80%"
 On Windows, use a shell command such as `command = "powershell.exe -NoLogo"`
 instead. Exit the shell to close the popup and restore the tiled terminal view.
 
+Popups run on the machine you are viewing. Set `run_on = "local"` to run a
+popup on this machine's local server instead, even while you view an SSH
+machine:
+
+```toml
+[[keys.command]]
+key = "prefix+u"
+type = "popup"
+run_on = "local"
+command = "my-switcher"
+description = "switch workspaces on any machine"
+```
+
+While you view another machine, the local popup is drawn over that view
+without switching machines. Keyboard and mouse input go to the popup until it
+exits. When you view the local machine, it behaves like an ordinary popup. If
+the local server is not running, Herdr shows the unavailable-machine notice.
+`run_on` accepts `"endpoint"` (the default) and `"local"`, and `"local"` is
+only valid with `type = "popup"`.
+
+Besides `HERDR_SOCKET_PATH` and `HERDR_BIN_PATH` of the local server and the
+usual `HERDR_ACTIVE_*` variables, a `run_on = "local"` popup gets the context
+you were viewing:
+
+| Variable | Value |
+| --- | --- |
+| `HERDR_VIEW_ENDPOINT` | `local`, or the profile id of the viewed machine |
+| `HERDR_VIEW_ENDPOINT_LABEL` | `local`, or the machine label |
+| `HERDR_VIEW_WORKSPACE_ID`, `HERDR_VIEW_TAB_ID`, `HERDR_VIEW_PANE_ID` | Focused ids on the viewed machine, when known |
+| `HERDR_VIEW_PANE_CWD` | Working directory of the focused pane, as a path on the viewed machine, when known |
+
+Without a local workspace, a local popup starts in your home directory.
+
 `type = "pane"` opens a temporary zoomed pane and closes it when the command exits.
 
 `type = "shell"` runs detached in the background.

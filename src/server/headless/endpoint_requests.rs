@@ -55,6 +55,18 @@ impl HeadlessServer {
             );
             return changed;
         }
+        if matches!(
+            request.method,
+            api::schema::Method::ClientShellPopupOverlayOpen(_)
+                | api::schema::Method::ClientShellPopupOverlayClose(_)
+        ) {
+            return self.handle_popup_overlay_request(
+                client_id,
+                boot_id,
+                request_id,
+                &request.method,
+            );
+        }
         if client.shell_endpoint_command_in_flight {
             let message = crate::server::client_commands::error_message(
                 boot_id,

@@ -38,6 +38,8 @@ pub(crate) struct ClientShellConfig {
     pub(super) keybinds: LiveKeybindConfig,
     pub(super) local_keys: crate::config::KeysConfig,
     pub(super) keybinding_source: ClientShellKeybindingSource,
+    /// Whether `keybinds` currently includes the client's own `run_on = "local"` popups.
+    pub(super) local_popup_overlays_bound: bool,
     pub(super) prompt_new_tab_name: bool,
     pub(super) prompt_new_workspace_name: bool,
     pub(super) confirm_close: bool,
@@ -254,6 +256,8 @@ pub(crate) enum ClientShellAction {
     },
     ReplayMouse(Vec<crossterm::event::MouseEvent>),
     Keybind(crate::input::KeybindAction),
+    /// An endpoint request for the Local popup overlay, sent whatever endpoint is presented.
+    LocalPopupOverlay(Box<ClientLocalPopupOverlayRequest>),
 }
 
 #[derive(Default)]
@@ -940,6 +944,7 @@ pub(crate) struct ClientShellState {
     pub(super) input_leases: ClientInputLeases,
     pub(super) popup_pending: bool,
     pub(super) popup_pending_deadline: Option<std::time::Instant>,
+    pub(super) local_popup_overlay: Option<ClientLocalPopupOverlay>,
     pub(super) next_request_id: u64,
     pub(super) pending_requests: HashMap<String, PendingEndpointRequest>,
     pub(super) pending_integration_installs: usize,
@@ -1108,6 +1113,7 @@ impl ClientShellState {
             input_leases: ClientInputLeases::default(),
             popup_pending: false,
             popup_pending_deadline: None,
+            local_popup_overlay: None,
             next_request_id: 1,
             pending_requests: HashMap::new(),
             pending_integration_installs: 0,
@@ -1242,6 +1248,8 @@ impl ClientShellState {
         self.pending_pane_surface = None;
         self.input_leases = ClientInputLeases::default();
         self.popup_terminal_id = None;
+        // A local popup overlay belongs to Local, not to the presented machine's projection.
+        self.popup_terminal_id = self.local_popup_overlay_terminal_id().map(str::to_owned);
         self.chrome_drag = None;
         self.workspace_press = None;
         self.tab_press = None;
@@ -1354,6 +1362,10 @@ impl ClientShellState {
             }
             ClientShellKeybindingSource::RemoteLocal => false,
         };
+        let local_popup_overlays = self.wants_local_popup_overlays();
+        let snapshot_keybindings_changed = snapshot_keybindings_changed
+            || (self.config.keybinding_source != ClientShellKeybindingSource::RemoteLocal
+                && self.config.local_popup_overlays_bound != local_popup_overlays);
         let active_keymap_changed = match self.config.keybinding_source {
             ClientShellKeybindingSource::Local => command_bindings_changed,
             ClientShellKeybindingSource::Endpoint => {
@@ -1397,6 +1409,7 @@ impl ClientShellState {
             if let Err(err) = self.config.apply_snapshot_keybindings(
                 snapshot.server_keybindings_toml.as_deref(),
                 &snapshot.commands,
+                local_popup_overlays,
             ) {
                 self.set_endpoint_error(err);
             } else if active_keymap_changed
@@ -1662,55 +1675,17 @@ impl ClientShellState {
             self.hits = ShellHitMap::default();
         }
         self.acknowledge_active_surface_agents(&surface);
-        let previous_popup = self.popup_terminal_id.clone();
-        let next_popup = surface
-            .popup
-            .as_deref()
-            .map(|popup| popup.terminal_id.clone());
-        if previous_popup != next_popup {
-            if next_popup.is_some() && matches!(self.overlay, Some(ClientShellOverlay::Settings(_)))
-            {
-                self.cancel_settings_overlay();
-            }
-            if let Some(terminal_id) = previous_popup.as_ref() {
-                self.input_leases
-                    .remove_target(&ClientInputTarget::Popup(terminal_id.clone()));
-            }
-            self.mode = ClientShellMode::Terminal;
-            self.navigate_workspace_id = None;
-            if !matches!(
-                self.overlay.as_ref(),
-                Some(ClientShellOverlay::Onboarding | ClientShellOverlay::ProductAnnouncement(_))
-            ) {
-                self.overlay = self
-                    .config
-                    .startup_onboarding
-                    .then_some(ClientShellOverlay::Onboarding);
-            }
-            self.selection = None;
-            self.last_pane_click = None;
-            self.selection_autoscroll = None;
-            self.selection_autoscroll_deadline = None;
-            self.selection_highlight_clear_deadline = None;
-            self.word_selection_gesture = None;
-            self.copy_mode = None;
-            self.reset_copy_pipeline();
-            self.chrome_drag = None;
-            self.workspace_press = None;
-            self.tab_press = None;
-            if self.pane_mouse_gesture.as_ref().is_some_and(|gesture| {
-                gesture.hit.popup && previous_popup.as_deref() == Some(gesture.hit.pane_id.as_str())
-            }) {
-                self.pane_mouse_gesture = None;
-            }
-            self.hits.popup = None;
-            self.endpoint_error = None;
-            self.endpoint_error_deadline = None;
-        }
-        if next_popup.is_some() {
-            self.popup_pending = false;
-            self.popup_pending_deadline = None;
-        }
+        // A local popup overlay keeps input while the presented machine's surface changes.
+        let next_popup = self
+            .local_popup_overlay_terminal_id()
+            .map(str::to_owned)
+            .or_else(|| {
+                surface
+                    .popup
+                    .as_deref()
+                    .map(|popup| popup.terminal_id.clone())
+            });
+        self.transition_popup_terminal(next_popup);
         let selection_pane = match &self.word_selection_gesture {
             Some(gesture) => Some(&gesture.pane_id),
             None => self.selection.as_ref().map(|selection| &selection.pane_id),
@@ -1799,7 +1774,6 @@ impl ClientShellState {
             self.stop_selection_autoscroll();
             self.selection_highlight_clear_deadline = None;
         }
-        self.popup_terminal_id = next_popup;
         self.graphics
             .set_scene(std::mem::take(&mut surface.graphics));
         self.pane_surface = Some(surface);
@@ -1809,6 +1783,55 @@ impl ClientShellState {
         self.reconcile_input_source();
     }
 
+    pub(super) fn transition_popup_terminal(&mut self, next_popup: Option<String>) {
+        let previous_popup = self.popup_terminal_id.clone();
+        if previous_popup != next_popup {
+            if next_popup.is_some() && matches!(self.overlay, Some(ClientShellOverlay::Settings(_)))
+            {
+                self.cancel_settings_overlay();
+            }
+            if let Some(terminal_id) = previous_popup.as_ref() {
+                self.input_leases
+                    .remove_target(&ClientInputTarget::Popup(terminal_id.clone()));
+            }
+            self.mode = ClientShellMode::Terminal;
+            self.navigate_workspace_id = None;
+            if !matches!(
+                self.overlay.as_ref(),
+                Some(ClientShellOverlay::Onboarding | ClientShellOverlay::ProductAnnouncement(_))
+            ) {
+                self.overlay = self
+                    .config
+                    .startup_onboarding
+                    .then_some(ClientShellOverlay::Onboarding);
+            }
+            self.selection = None;
+            self.last_pane_click = None;
+            self.selection_autoscroll = None;
+            self.selection_autoscroll_deadline = None;
+            self.selection_highlight_clear_deadline = None;
+            self.word_selection_gesture = None;
+            self.copy_mode = None;
+            self.reset_copy_pipeline();
+            self.chrome_drag = None;
+            self.workspace_press = None;
+            self.tab_press = None;
+            if self.pane_mouse_gesture.as_ref().is_some_and(|gesture| {
+                gesture.hit.popup && previous_popup.as_deref() == Some(gesture.hit.pane_id.as_str())
+            }) {
+                self.pane_mouse_gesture = None;
+            }
+            self.hits.popup = None;
+            self.endpoint_error = None;
+            self.endpoint_error_deadline = None;
+        }
+        if next_popup.is_some() {
+            self.popup_pending = false;
+            self.popup_pending_deadline = None;
+        }
+        self.popup_terminal_id = next_popup;
+    }
+
     pub(crate) fn tick_popup_pending(&mut self, now: std::time::Instant) {
         if self
             .popup_pending_deadline
@@ -1816,6 +1839,14 @@ impl ClientShellState {
         {
             self.popup_pending = false;
             self.popup_pending_deadline = None;
+            // An acknowledged local overlay that never produced a frame already ended.
+            if self
+                .local_popup_overlay
+                .as_ref()
+                .is_some_and(|overlay| overlay.request_id.is_none() && overlay.popup.is_none())
+            {
+                self.clear_local_popup_overlay();
+            }
         }
     }
 
