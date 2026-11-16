@@ -37,7 +37,7 @@ impl HeadlessServer {
         &self,
         client_id: u64,
     ) -> Option<(&crate::terminal::TerminalRuntime, crate::layout::PaneId)> {
-        if self.popup_owner_tab_id == self.shell_tab_id_for_client(client_id) {
+        if self.client_sees_popup(client_id) {
             if let Some(popup) = &self.app.state.popup_pane {
                 return self
                     .app
@@ -316,10 +316,16 @@ impl HeadlessServer {
                 } else {
                     pane_ids.extend(tab.layout.pane_ids());
                 }
-                if self.popup_owner_tab_id == self.shell_tab_id_for_client(client_id) {
+                if self.client_sees_popup(client_id) {
                     if let Some(popup) = &self.app.state.popup_pane {
                         pane_ids.insert(popup.pane_id);
                     }
+                }
+            }
+            // A local popup overlay streams to a client that presents another machine.
+            if self.popup_overlay.is_some() {
+                if let Some(popup) = &self.app.state.popup_pane {
+                    pane_ids.insert(popup.pane_id);
                 }
             }
         }
@@ -345,13 +351,15 @@ impl HeadlessServer {
     fn pty_render_targets(&self) -> (bool, HashSet<&str>) {
         let mut has_app_target = false;
         let mut direct_terminal_targets = HashSet::new();
-        for client in self
+        for (&client_id, client) in self
             .clients
-            .values()
-            .filter(|client| client.writer.is_some())
+            .iter()
+            .filter(|(_, client)| client.writer.is_some())
         {
             match &client.mode {
-                ClientConnectionMode::ClientShell if client.shell_surface_active => {
+                ClientConnectionMode::ClientShell
+                    if client.shell_surface_active || self.is_popup_overlay_client(client_id) =>
+                {
                     has_app_target = true;
                 }
                 ClientConnectionMode::ClientShell => {}
@@ -414,17 +422,20 @@ impl HeadlessServer {
 
     fn any_shell_surface_contains_pane(&self, pane_id: crate::layout::PaneId) -> bool {
         self.clients.iter().any(|(&client_id, client)| {
-            if !client.is_active_shell_client() || client.writer.is_none() {
-                return false;
-            }
-            if self
+            let popup_source = self
                 .app
                 .state
                 .popup_pane
                 .as_ref()
-                .is_some_and(|popup| popup.pane_id == pane_id)
-            {
-                return self.popup_owner_tab_id == self.shell_tab_id_for_client(client_id);
+                .is_some_and(|popup| popup.pane_id == pane_id);
+            if popup_source && self.is_popup_overlay_client(client_id) {
+                return client.writer.is_some();
+            }
+            if !client.is_active_shell_client() || client.writer.is_none() {
+                return false;
+            }
+            if popup_source {
+                return self.client_sees_popup(client_id);
             }
             let Some(target) = self.shell_target_for_client(client_id) else {
                 return false;
@@ -571,8 +582,7 @@ impl HeadlessServer {
             }
             let area = Rect::new(0, 0, cols, rows);
             let shell_target = self.shell_target_for_client(client_id);
-            let shell_tab_id = self.shell_tab_id_for_client(client_id);
-            let shell_shows_popup = shell_tab_id.as_deref() == self.popup_owner_tab_id.as_deref();
+            let shell_shows_popup = self.client_sees_popup(client_id);
             let shell_graphics_delivery = self
                 .clients
                 .get(&client_id)
@@ -993,6 +1003,8 @@ impl HeadlessServer {
                 }
             }
         }
+
+        self.stream_popup_overlay();
 
         if !broken_clients.is_empty() {
             for client_id in broken_clients {

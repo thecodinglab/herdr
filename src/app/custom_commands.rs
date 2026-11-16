@@ -47,6 +47,16 @@ impl EndpointCommandRegistry {
     }
 }
 
+#[cfg(test)]
+impl App {
+    pub(crate) fn install_test_custom_commands(
+        &mut self,
+        bindings: &[crate::config::CustomCommandKeybind],
+    ) {
+        self.endpoint_commands = EndpointCommandRegistry::new(bindings);
+    }
+}
+
 impl App {
     pub(crate) fn client_shell_keybindings_profile(&self) -> Option<&str> {
         self.client_shell_keybindings_profile.as_deref()
@@ -230,14 +240,49 @@ impl App {
         &mut self,
         binding: &crate::config::CustomCommandKeybind,
     ) -> io::Result<()> {
+        let mut env = self.custom_command_env().0;
+        if binding.run_on == crate::config::CommandRunOn::Local {
+            // Presenting Local: the presented context is this server's own focus.
+            env.extend(popup_view_env(&local_popup_view(&env)));
+        }
         self.spawn_popup_shell_command(
             &binding.command,
             None,
-            self.custom_command_env().0,
+            env,
             crate::app::popup::PopupGeometry {
                 width: binding.width,
                 height: binding.height,
             },
+        )
+    }
+
+    /// Open a `run_on = "local"` popup for a client shell that presents another machine.
+    /// `area` is that client's pane surface; the popup needs no local workspace.
+    pub(crate) fn spawn_overlay_popup_command(
+        &mut self,
+        binding: &crate::config::CustomCommandKeybind,
+        view: &crate::api::schema::ClientShellPopupOverlayView,
+        area: ratatui::layout::Rect,
+    ) -> io::Result<()> {
+        if binding.action != crate::config::CustomCommandAction::Popup
+            || binding.run_on != crate::config::CommandRunOn::Local
+        {
+            return Err(io::Error::other(
+                "command is not a run_on = \"local\" popup",
+            ));
+        }
+        let (mut env, cwd) = self.custom_command_env();
+        env.extend(popup_view_env(view));
+        let cwd = cwd.or_else(popup_home_dir);
+        self.spawn_popup_shell_command_at(
+            &binding.command,
+            cwd,
+            env,
+            crate::app::popup::PopupGeometry {
+                width: binding.width,
+                height: binding.height,
+            },
+            crate::app::popup::PopupPlacement::Overlay(area),
         )
     }
 
@@ -527,6 +572,59 @@ impl App {
     }
 }
 
+/// `HERDR_VIEW_*` variables describe the machine and focus a client presented when it opened a
+/// `run_on = "local"` popup. Absent ids stay unset.
+pub(crate) fn popup_view_env(
+    view: &crate::api::schema::ClientShellPopupOverlayView,
+) -> Vec<(String, String)> {
+    let mut env = vec![
+        ("HERDR_VIEW_ENDPOINT".to_owned(), view.endpoint_id.clone()),
+        (
+            "HERDR_VIEW_ENDPOINT_LABEL".to_owned(),
+            view.endpoint_label.clone(),
+        ),
+    ];
+    for (key, value) in [
+        ("HERDR_VIEW_WORKSPACE_ID", &view.workspace_id),
+        ("HERDR_VIEW_TAB_ID", &view.tab_id),
+        ("HERDR_VIEW_PANE_ID", &view.pane_id),
+        ("HERDR_VIEW_PANE_CWD", &view.pane_cwd),
+    ] {
+        if let Some(value) = value {
+            env.push((key.to_owned(), value.clone()));
+        }
+    }
+    env
+}
+
+/// The presented context of a client that presents this server, from its custom-command env.
+fn local_popup_view(
+    custom_command_env: &[(String, String)],
+) -> crate::api::schema::ClientShellPopupOverlayView {
+    let active = |key: &str| {
+        custom_command_env
+            .iter()
+            .find(|(candidate, _)| candidate == key)
+            .map(|(_, value)| value.clone())
+    };
+    crate::api::schema::ClientShellPopupOverlayView {
+        endpoint_id: "local".to_owned(),
+        endpoint_label: "local".to_owned(),
+        workspace_id: active("HERDR_ACTIVE_WORKSPACE_ID"),
+        tab_id: active("HERDR_ACTIVE_TAB_ID"),
+        pane_id: active("HERDR_ACTIVE_PANE_ID"),
+        pane_cwd: active("HERDR_ACTIVE_PANE_CWD"),
+    }
+}
+
+fn popup_home_dir() -> Option<std::path::PathBuf> {
+    ["HOME", "USERPROFILE"].into_iter().find_map(|key| {
+        std::env::var_os(key)
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+    })
+}
+
 fn write_scrollback_temp_file(content: &str) -> io::Result<std::path::PathBuf> {
     let mut last_collision = None;
     for attempt in 0..16 {
@@ -592,6 +690,7 @@ mod tests {
             description: Some("safe description".into()),
             width: None,
             height: None,
+            run_on: crate::config::CommandRunOn::Endpoint,
         }
     }
 
@@ -780,5 +879,76 @@ mod tests {
             crate::protocol::ClientShellCommandAction::Popup
         );
         assert!(!format!("{manifest:?}").contains("secret-command"));
+    }
+
+    #[test]
+    fn popup_view_env_exports_the_presented_context_and_omits_unknown_ids() {
+        let env = super::popup_view_env(&crate::api::schema::ClientShellPopupOverlayView {
+            endpoint_id: "0123456789abcdef0123456789abcdef".into(),
+            endpoint_label: "macmini".into(),
+            workspace_id: Some("w9".into()),
+            tab_id: None,
+            pane_id: Some("w9:p1".into()),
+            pane_cwd: Some("/remote/path".into()),
+        });
+        let get = |key: &str| {
+            env.iter()
+                .find(|(candidate, _)| candidate == key)
+                .map(|(_, value)| value.as_str())
+        };
+        assert_eq!(
+            get("HERDR_VIEW_ENDPOINT"),
+            Some("0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(get("HERDR_VIEW_ENDPOINT_LABEL"), Some("macmini"));
+        assert_eq!(get("HERDR_VIEW_WORKSPACE_ID"), Some("w9"));
+        assert_eq!(get("HERDR_VIEW_TAB_ID"), None);
+        assert_eq!(get("HERDR_VIEW_PANE_ID"), Some("w9:p1"));
+        assert_eq!(get("HERDR_VIEW_PANE_CWD"), Some("/remote/path"));
+    }
+
+    #[test]
+    fn presenting_local_views_this_servers_focus() {
+        let view = super::local_popup_view(&[
+            ("HERDR_ACTIVE_WORKSPACE_ID".into(), "w1".into()),
+            ("HERDR_ACTIVE_TAB_ID".into(), "w1:t1".into()),
+            ("HERDR_ACTIVE_PANE_ID".into(), "w1:p1".into()),
+            ("HERDR_ACTIVE_PANE_CWD".into(), "/repo".into()),
+        ]);
+        assert_eq!(view.endpoint_id, "local");
+        assert_eq!(view.endpoint_label, "local");
+        assert_eq!(view.workspace_id.as_deref(), Some("w1"));
+        assert_eq!(view.tab_id.as_deref(), Some("w1:t1"));
+        assert_eq!(view.pane_id.as_deref(), Some("w1:p1"));
+        assert_eq!(view.pane_cwd.as_deref(), Some("/repo"));
+    }
+
+    #[tokio::test]
+    async fn overlay_popup_runs_without_a_local_workspace() {
+        let mut app = test_app();
+        app.state.workspaces.clear();
+        app.state.active = None;
+        let mut popup = binding(crate::config::CustomCommandAction::Popup);
+        popup.command = "sleep 30".into();
+        popup.run_on = crate::config::CommandRunOn::Local;
+        let view = crate::api::schema::ClientShellPopupOverlayView {
+            endpoint_id: "0123456789abcdef0123456789abcdef".into(),
+            endpoint_label: "macmini".into(),
+            workspace_id: None,
+            tab_id: None,
+            pane_id: None,
+            pane_cwd: None,
+        };
+
+        app.spawn_overlay_popup_command(&popup, &view, ratatui::layout::Rect::new(0, 0, 100, 30))
+            .unwrap();
+
+        assert!(app.state.popup_pane.is_some());
+        assert!(app.close_popup_pane());
+
+        popup.run_on = crate::config::CommandRunOn::Endpoint;
+        assert!(app
+            .spawn_overlay_popup_command(&popup, &view, ratatui::layout::Rect::new(0, 0, 100, 30))
+            .is_err());
     }
 }

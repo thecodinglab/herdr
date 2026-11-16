@@ -90,13 +90,15 @@ impl ClientShellState {
                     self.config.agent_panel_sort = agent_panel_sort;
                 }
                 self.set_local_config_diagnostic(self.config.local_config_diagnostic(&diagnostics));
+                let local_popup_overlays = self.wants_local_popup_overlays();
                 if let Some(snapshot) = self.snapshot.as_deref() {
                     let profile = snapshot.server_keybindings_toml.clone();
                     let commands = snapshot.commands.clone();
-                    if let Err(err) = self
-                        .config
-                        .apply_snapshot_keybindings(profile.as_deref(), &commands)
-                    {
+                    if let Err(err) = self.config.apply_snapshot_keybindings(
+                        profile.as_deref(),
+                        &commands,
+                        local_popup_overlays,
+                    ) {
                         self.set_endpoint_error(err);
                     }
                 }
@@ -144,6 +146,7 @@ impl ClientShellConfig {
                 }),
             local_keys: config.keys.clone(),
             keybinding_source: ClientShellKeybindingSource::Local,
+            local_popup_overlays_bound: false,
             prompt_new_tab_name: config.ui.prompt_new_tab_name,
             prompt_new_workspace_name: config.ui.prompt_new_workspace_name,
             confirm_close: config.ui.confirm_close,
@@ -225,11 +228,33 @@ impl ClientShellConfig {
         self
     }
 
+    /// The client's own `run_on = "local"` popup commands. They stay bound while another
+    /// machine is presented and run on the local server as an overlay.
+    fn local_popup_overlay_commands(&self) -> Vec<crate::config::CommandKeybindConfig> {
+        self.local_keys
+            .command
+            .iter()
+            .filter(|command| {
+                command.run_on == crate::config::CommandRunOn::Local
+                    && command.action_type == crate::config::CommandKeybindType::Popup
+                    && !command.command.trim().is_empty()
+            })
+            .cloned()
+            .collect()
+    }
+
     pub(super) fn apply_snapshot_keybindings(
         &mut self,
         profile: Option<&str>,
         commands: &[crate::protocol::ClientShellCommand],
+        local_popup_overlays: bool,
     ) -> Result<(), String> {
+        self.local_popup_overlays_bound = local_popup_overlays;
+        let overlay_commands = if local_popup_overlays {
+            self.local_popup_overlay_commands()
+        } else {
+            Vec::new()
+        };
         let mut keybinds = match self.keybinding_source {
             ClientShellKeybindingSource::Endpoint => crate::config::keybindings_from_profile_toml(
                 profile.ok_or("endpoint did not publish its keybindings")?,
@@ -240,9 +265,13 @@ impl ClientShellConfig {
                     keys: self.local_keys.clone(),
                     ..Default::default()
                 };
-                config.keys.command = commands
-                    .iter()
-                    .filter_map(|command| {
+                // Local popup commands come first so they win key collisions with the
+                // presented machine's own commands.
+                config.keys.command = overlay_commands.clone();
+                config
+                    .keys
+                    .command
+                    .extend(commands.iter().filter_map(|command| {
                         let action_type = match command.action {
                             crate::protocol::ClientShellCommandAction::Shell => {
                                 crate::config::CommandKeybindType::Shell
@@ -271,9 +300,9 @@ impl ClientShellConfig {
                             description: command.description.clone(),
                             width: None,
                             height: None,
+                            run_on: crate::config::CommandRunOn::Endpoint,
                         })
-                    })
-                    .collect();
+                    }));
                 config
                     .live_keybinds_with_diagnostics()
                     .map(|(keybinds, _diagnostics)| keybinds)
@@ -298,8 +327,28 @@ impl ClientShellConfig {
                         description: command.description.clone(),
                         width: None,
                         height: None,
+                        run_on: crate::config::CommandRunOn::Endpoint,
                     });
             }
+            let mut overlays = Vec::with_capacity(overlay_commands.len());
+            for command in overlay_commands {
+                let bindings =
+                    crate::config::ActionKeybinds::from_labels(&command.key.into_values())?;
+                if bindings.bindings.is_empty() {
+                    continue;
+                }
+                overlays.push(crate::config::CustomCommandKeybind {
+                    label: bindings.label().unwrap_or_default(),
+                    bindings,
+                    command: command.command,
+                    action: crate::config::CustomCommandAction::Popup,
+                    description: command.description,
+                    width: command.width,
+                    height: command.height,
+                    run_on: crate::config::CommandRunOn::Local,
+                });
+            }
+            keybinds.keybinds.custom_commands.splice(0..0, overlays);
         }
         self.keybinds = keybinds;
         Ok(())

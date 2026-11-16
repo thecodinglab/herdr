@@ -62,6 +62,8 @@ fn fast_path_blocker(
         Some("client_surface_patch.fallback.mode")
     } else if state.overlay.is_some() {
         Some("client_surface_patch.fallback.overlay")
+    } else if state.local_popup_overlay.is_some() {
+        Some("client_surface_patch.fallback.local_popup")
     } else if state.endpoint_error.is_some() {
         Some("client_surface_patch.fallback.endpoint_error")
     } else if state.config_diagnostic.is_some() {

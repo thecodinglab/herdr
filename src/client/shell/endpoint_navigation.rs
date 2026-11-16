@@ -274,6 +274,13 @@ impl ClientShellState {
         if !self.notification_target_is_current(&endpoint_id, &target) {
             return false;
         }
+        // A focus request, including one sent from inside a local popup, closes that popup first.
+        if let Some(close) = self.close_local_popup_overlay() {
+            outcome
+                .actions
+                .push(ClientShellAction::LocalPopupOverlay(Box::new(close)));
+            outcome.repaint = true;
+        }
         self.pending_workspace_highlight = None;
         self.pending_agent_reveal = None;
         let online = self.endpoint_is_online(&endpoint_id);

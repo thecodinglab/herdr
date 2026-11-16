@@ -22,6 +22,8 @@ mod graphics;
 mod input;
 mod input_source;
 mod link_hover;
+mod local_popup;
+pub(crate) use local_popup::*;
 mod mobile;
 mod mouse;
 mod notification_policy;

@@ -179,6 +179,12 @@ impl ClientShellState {
                 outcome.actions.push(ClientShellAction::Keybind(action));
             }
             crate::input::KeybindMatch::Command(command) => {
+                if command.run_on == crate::config::CommandRunOn::Local
+                    && !self.active_endpoint_id.is_local()
+                {
+                    self.open_local_popup_overlay(&command, outcome);
+                    return;
+                }
                 let action = command.action.into();
                 let resolved_labels = command.bindings.labels();
                 let command_id = self.snapshot.as_deref().and_then(|snapshot| {
@@ -476,6 +482,15 @@ impl ClientShellState {
     }
 
     pub(crate) fn cancel_endpoint_request(&mut self, request_id: &str) -> bool {
+        if self.owns_local_popup_overlay_request(request_id) {
+            return self.handle_local_popup_overlay_result(
+                request_id,
+                Err(ClientShellEndpointError {
+                    code: Some("endpoint_cancelled".into()),
+                    message: "The local server did not open the popup.".into(),
+                }),
+            );
+        }
         let Some(pending) = self.pending_requests.get(request_id) else {
             return false;
         };

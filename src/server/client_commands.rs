@@ -254,6 +254,14 @@ mod tests {
             actual.remove("pane.link.resolve").as_deref(),
             Some("f5e4a3e01453ae7b188f127ce951c12c20e0bebcc17cc364eeb6d1a01fd5bf81")
         );
+        assert_eq!(
+            actual.remove("client_shell.popup_overlay.open").as_deref(),
+            Some("ab8b6cc7dd0b782cafcbc827e1e8a683cf17a3a06664bb562ca2e6cc2ef608fb")
+        );
+        assert_eq!(
+            actual.remove("client_shell.popup_overlay.close").as_deref(),
+            Some("3c0b9770eb18b50e8f31e71ec680bd1e23466c466265e6cf6f0e015517318649")
+        );
 
         assert_eq!(
             actual, expected,

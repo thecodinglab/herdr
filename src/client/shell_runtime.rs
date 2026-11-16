@@ -59,6 +59,21 @@ pub(super) fn dispatch_client_shell_actions(
                     }
                 }
             }
+            shell::ClientShellAction::LocalPopupOverlay(overlay) => {
+                let local = endpoint::ClientEndpointId::Local;
+                let request_id = overlay.request.id.clone();
+                let generation = endpoints
+                    .connection(&local)
+                    .map(|connection| connection.generation)
+                    .filter(|generation| {
+                        overlay.generation.is_none_or(|owner| owner == *generation)
+                    });
+                if let Some(generation) = generation {
+                    endpoint_commands.enqueue(local, generation, overlay.boot_id, overlay.request);
+                } else if let Some(shell) = shell.as_deref_mut() {
+                    repaint |= shell.cancel_endpoint_request(&request_id);
+                }
+            }
             shell::ClientShellAction::ReplayMouse(events) => replay_mouse.extend(events),
             shell::ClientShellAction::Keybind(action) => {
                 debug!(
@@ -74,6 +89,15 @@ pub(super) fn dispatch_client_shell_actions(
     if endpoints.active_surface_available() {
         let active_endpoint = endpoints.active_id().clone();
         let cancelled = endpoint_commands.send_next(&active_endpoint, endpoints);
+        if let Some(shell) = shell.as_deref_mut() {
+            for request_id in cancelled {
+                repaint |= shell.cancel_endpoint_request(&request_id);
+            }
+        }
+    }
+    // Local popup overlay requests use the Local lane while another machine is presented.
+    if !endpoints.active_id().is_local() {
+        let cancelled = endpoint_commands.send_next(&endpoint::ClientEndpointId::Local, endpoints);
         if let Some(shell) = shell {
             for request_id in cancelled {
                 repaint |= shell.cancel_endpoint_request(&request_id);
@@ -243,6 +267,29 @@ pub(super) fn begin_endpoint_activation(
         return Ok(());
     }
     state.deferred_local_activation = None;
+    // Changing what this client presents, including a focus request from inside the popup,
+    // closes a local popup overlay first.
+    if let Some(close) = state
+        .shell
+        .as_mut()
+        .and_then(shell::ClientShellState::close_local_popup_overlay)
+    {
+        dispatch_client_shell_actions(
+            vec![shell::ClientShellAction::LocalPopupOverlay(Box::new(close))],
+            endpoint_commands,
+            endpoints,
+            state.shell.as_mut(),
+            &mut state.detached_process_children,
+            scheduled_activation,
+        )?;
+        if let Some(frame) = state
+            .shell
+            .as_mut()
+            .and_then(|shell| shell.compose(state.reported_size.0, state.reported_size.1))
+        {
+            state.present_frame(frame);
+        }
+    }
     if endpoint_id.is_local() && !local_activation_metadata_ready(state, endpoints) {
         state.deferred_local_activation = Some(endpoint::EndpointActivationIntent {
             endpoint_id,
@@ -773,6 +820,32 @@ pub(super) fn finish_client_shell_input(
             let _ = write_to_server(endpoints, &resize);
         }
     }
+    // A local popup overlay is sized by this client's surface even while another machine is
+    // presented, so Local learns that size before the overlay opens and whenever it changes.
+    let opens_local_popup_overlay = outcome
+        .actions
+        .iter()
+        .any(|action| matches!(action, shell::ClientShellAction::LocalPopupOverlay(_)));
+    if !endpoints.active_id().is_local()
+        && (opens_local_popup_overlay
+            || (outcome.resize
+                && state
+                    .shell
+                    .as_ref()
+                    .is_some_and(shell::ClientShellState::local_popup_overlay_active)))
+    {
+        if let Some(shell) = state.shell.as_ref() {
+            let resize = client_shell_resize_message(
+                shell,
+                state.reported_size.0,
+                state.reported_size.1,
+                state.reported_cell_size.0,
+                state.reported_cell_size.1,
+                state.pixel_mouse_available(),
+            );
+            endpoints.send_to(&endpoint::ClientEndpointId::Local, &resize);
+        }
+    }
     #[cfg(not(windows))]
     if outcome.query_host_appearance {
         query_host_terminal_appearance();
@@ -806,7 +879,20 @@ pub(super) fn finish_client_shell_input(
         .as_ref()
         .is_none_or(|shell| shell.endpoint_is_online(endpoints.active_id()))
         && endpoints.active_surface_available();
+    let local_popup_overlay_terminal = state
+        .shell
+        .as_ref()
+        .and_then(shell::ClientShellState::local_popup_overlay_terminal_id)
+        .map(str::to_owned)
+        .filter(|_| !endpoints.active_id().is_local());
     for request in outcome.requests {
+        if let ClientMessage::ClientShellPopupInput { terminal_id, .. } = &request {
+            if local_popup_overlay_terminal.as_deref() == Some(terminal_id.as_str()) {
+                // Overlay input belongs to the local popup, not to the presented machine.
+                endpoints.send_to(&endpoint::ClientEndpointId::Local, &request);
+                continue;
+            }
+        }
         if let ClientMessage::ClientShellHostTheme { update } = &request {
             state.record_host_theme_update(update);
             if let Some(activation) = pending_activation.as_mut() {
@@ -968,6 +1054,99 @@ mod tests {
                     color: crate::protocol::ClientHostColor { r: 4, g: 5, b: 6 },
                 },
             }
+        );
+    }
+    #[test]
+    fn local_popup_overlay_traffic_reaches_local_while_a_remote_machine_is_presented() {
+        #[derive(Clone)]
+        struct Capture(std::sync::Arc<std::sync::Mutex<Vec<ClientMessage>>>);
+
+        impl endpoint::EndpointTransport for Capture {
+            fn send(&mut self, message: &ClientMessage) -> std::io::Result<()> {
+                self.0.lock().unwrap().push(message.clone());
+                Ok(())
+            }
+        }
+
+        let local_sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let remote_sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut endpoints = endpoint::EndpointRegistry::new(
+            Capture(local_sent.clone()),
+            1,
+            endpoint::EndpointNegotiation::new(Vec::new(), Vec::new()),
+        );
+        let remote = endpoint::ClientEndpointId::Ssh(
+            endpoint::ProfileId::parse("0123456789abcdef0123456789abcdef").unwrap(),
+        );
+        endpoints.insert(
+            remote.clone(),
+            Capture(remote_sent.clone()),
+            2,
+            endpoint::EndpointNegotiation::default(),
+            true,
+        );
+        assert!(endpoints.set_active(&remote));
+        let mut state = ClientState::test_new();
+        state
+            .shell
+            .as_mut()
+            .unwrap()
+            .test_set_local_popup_overlay("terminal-local");
+        let outcome = shell::ClientShellInput {
+            resize: true,
+            requests: vec![ClientMessage::ClientShellPopupInput {
+                terminal_id: "terminal-local".into(),
+                events: vec![crate::protocol::ClientPaneInputEvent::Paste("x".into())],
+            }],
+            actions: vec![shell::ClientShellAction::LocalPopupOverlay(Box::new(
+                shell::ClientLocalPopupOverlayRequest {
+                    generation: Some(1),
+                    boot_id: "boot".into(),
+                    request: Box::new(crate::api::schema::Request {
+                        id: "client-shell-popup-overlay:1".into(),
+                        method: crate::api::schema::Method::ClientShellPopupOverlayClose(
+                            crate::api::schema::EmptyParams::default(),
+                        ),
+                    }),
+                },
+            ))],
+            ..Default::default()
+        };
+        let mut pending_activation = None;
+        let mut endpoint_commands = endpoint_commands::EndpointCommands::default();
+        let mut prefix_input_source = crate::platform::RealPrefixInputSource::default();
+        let mut scheduled_activation = None;
+
+        finish_client_shell_input(
+            &mut state,
+            outcome,
+            None,
+            &mut endpoints,
+            &mut pending_activation,
+            &mut endpoint_commands,
+            &mut prefix_input_source,
+            &mut scheduled_activation,
+        )
+        .unwrap();
+
+        let local = local_sent.lock().unwrap();
+        assert!(
+            matches!(
+                local.as_slice(),
+                [
+                    ClientMessage::ClientShellResize { .. },
+                    ClientMessage::ClientShellEndpointRequest { .. },
+                    ClientMessage::ClientShellPopupInput { terminal_id, .. },
+                ] if terminal_id == "terminal-local"
+            ),
+            "{local:?}"
+        );
+        let remote = remote_sent.lock().unwrap();
+        assert!(
+            remote
+                .iter()
+                .all(|message| matches!(message, ClientMessage::ClientShellResize { .. })),
+            "{remote:?}"
         );
     }
 }

@@ -1339,6 +1339,14 @@ async fn run_client_loop(
                         pixel_mouse: pixel_mouse_available,
                     }
                 };
+                // A local popup overlay is sized by this client's surface even while another
+                // machine is presented.
+                let local_overlay_resize = (state
+                    .shell
+                    .as_ref()
+                    .is_some_and(shell::ClientShellState::local_popup_overlay_active)
+                    && !write_stream.active_id().is_local())
+                .then(|| msg.clone());
                 if let Some(activation) = pending_activation.as_mut() {
                     if let Err(error) = activation.update_resize(msg, &mut write_stream) {
                         rollback_endpoint_activation(
@@ -1351,6 +1359,9 @@ async fn run_client_loop(
                     }
                 } else if let Err(e) = write_to_server(&mut write_stream, &msg) {
                     return Err(ClientError::ConnectionLost(e));
+                }
+                if let Some(msg) = local_overlay_resize {
+                    write_stream.send_to(&endpoint::ClientEndpointId::Local, &msg);
                 }
             }
             ClientLoopEvent::EndpointSupervisor(event) => match event {
@@ -1500,10 +1511,17 @@ async fn run_client_loop(
                     ),
                     _ => false,
                 };
+                let local_popup_overlay = !endpoint_active
+                    && endpoint_id.is_local()
+                    && state
+                        .shell
+                        .as_ref()
+                        .is_some_and(|shell| shell.accepts_local_popup_overlay_surface(generation));
                 if !endpoint::accepts_endpoint_message(
                     endpoint_active,
                     activation_message,
                     command_response,
+                    local_popup_overlay,
                     message.as_ref(),
                 ) {
                     continue;
@@ -1559,6 +1577,24 @@ async fn run_client_loop(
                                 )? {
                                     scheduled_activation = Some(event);
                                 }
+                            }
+                            continue;
+                        }
+                        if local_popup_overlay {
+                            let composed = state.shell.as_mut().and_then(|shell| {
+                                shell
+                                    .receive_local_popup_overlay_surface(generation, surface)
+                                    .then(|| {
+                                        shell.compose(state.reported_size.0, state.reported_size.1)
+                                    })
+                                    .flatten()
+                            });
+                            apply_client_shell_input_source_changes(
+                                &mut state,
+                                &mut prefix_input_source,
+                            );
+                            if let Some(frame) = composed {
+                                state.present_frame(frame);
                             }
                             continue;
                         }
@@ -1939,6 +1975,15 @@ async fn run_client_loop(
                         let (repaint, actions) = state.shell.as_mut().map_or_else(
                             || (false, Vec::new()),
                             |shell| {
+                                if shell.owns_local_popup_overlay_request(&completed.request_id) {
+                                    return (
+                                        shell.handle_local_popup_overlay_result(
+                                            &completed.request_id,
+                                            completed.result,
+                                        ),
+                                        Vec::new(),
+                                    );
+                                }
                                 if completed.generation == generation
                                     && shell.endpoint_is_active(&completed.endpoint_id)
                                 {
@@ -2334,6 +2379,13 @@ async fn run_client_loop(
                         let shell = state.shell.as_mut().expect("checked shell mode");
                         let mut outcome = shell.tick_selection_autoscroll(now);
                         for expired in expired_endpoints {
+                            if shell.owns_local_popup_overlay_request(&expired.request_id) {
+                                outcome.repaint |= shell.handle_local_popup_overlay_result(
+                                    &expired.request_id,
+                                    expired.result,
+                                );
+                                continue;
+                            }
                             if !shell.endpoint_is_active(&expired.endpoint_id) {
                                 continue;
                             }

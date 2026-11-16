@@ -11,6 +11,7 @@ fn pending_popup() -> (ClientShellState, Vec<ClientShellAction>) {
         description: None,
         width: None,
         height: None,
+        run_on: crate::config::CommandRunOn::Endpoint,
     };
     let mut projection = snapshot();
     projection

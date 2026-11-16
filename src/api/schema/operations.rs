@@ -205,6 +205,8 @@ mod tests {
             "plugin.pane.open",
             "plugin.pane.focus",
             "plugin.pane.close",
+            "client_shell.popup_overlay.open",
+            "client_shell.popup_overlay.close",
         ]
         .into_iter()
         .collect::<BTreeSet<_>>();

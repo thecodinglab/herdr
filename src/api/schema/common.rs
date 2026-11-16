@@ -74,6 +74,34 @@ pub struct ClientShellSurfaceSetParams {
     pub active: bool,
 }
 
+/// Opens a local `run_on = "local"` popup command as an overlay for the requesting client shell,
+/// which may currently present another machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ClientShellPopupOverlayOpenParams {
+    /// Opaque endpoint-issued command identifier from this server's client-shell projection.
+    pub command_id: String,
+    /// The context the client presents while the popup runs.
+    pub view: ClientShellPopupOverlayView,
+}
+
+/// Focus context of the machine a client shell presents, exported to a local popup process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ClientShellPopupOverlayView {
+    /// `local` or the saved machine profile id.
+    pub endpoint_id: String,
+    /// `local` or the saved machine label.
+    pub endpoint_label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_id: Option<String>,
+    /// Focused pane working directory, as a path on the presented machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_cwd: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SplitDirection {

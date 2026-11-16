@@ -16,10 +16,14 @@ pub(crate) fn is_presentation_effect(message: &ServerMessage) -> bool {
     )
 }
 
+/// `local_popup_overlay` is set for the Local connection while it streams a popup overlay to a
+/// client presenting another machine. Only its pane surfaces are admitted; every other
+/// presentation effect stays with the presented endpoint.
 pub(crate) fn accepts_endpoint_message(
     endpoint_active: bool,
     activation_message: bool,
     command_response: bool,
+    local_popup_overlay: bool,
     message: &ServerMessage,
 ) -> bool {
     endpoint_active
@@ -42,6 +46,7 @@ pub(crate) fn accepts_endpoint_message(
                 message,
                 ServerMessage::ClientShellEndpointResponseChunk { .. }
             ))
+        || (local_popup_overlay && matches!(message, ServerMessage::PaneSurface(_)))
 }
 
 #[cfg(test)]
@@ -54,12 +59,14 @@ mod tests {
             false,
             false,
             false,
+            false,
             &ServerMessage::EndpointControl {
                 kind: "snapshot".into(),
                 data: "{}".into(),
             }
         ));
         assert!(!accepts_endpoint_message(
+            false,
             false,
             false,
             false,
@@ -71,10 +78,54 @@ mod tests {
             false,
             false,
             false,
+            false,
             &ServerMessage::WindowTitle {
                 title: Some("remote".into())
             }
         ));
+    }
+
+    #[test]
+    fn local_popup_overlay_admits_only_local_surfaces() {
+        let surface = ServerMessage::PaneSurface(crate::protocol::PaneSurfaceFrame {
+            boot_id: "boot".into(),
+            projection_revision: 1,
+            surface_revision: 1,
+            frame: crate::protocol::FrameData {
+                cells: Vec::new(),
+                width: 0,
+                height: 0,
+                cursor: None,
+                hyperlinks: Vec::new(),
+                graphics: Vec::new(),
+            },
+            panes: Vec::new(),
+            splits: Vec::new(),
+            popup: None,
+            graphics: Default::default(),
+        });
+        assert!(!accepts_endpoint_message(
+            false, false, false, false, &surface
+        ));
+        assert!(accepts_endpoint_message(
+            false, false, false, true, &surface
+        ));
+        for effect in [
+            ServerMessage::MouseCapture {
+                enabled: true,
+                sgr_pixels: false,
+            },
+            ServerMessage::WindowTitle {
+                title: Some("local".into()),
+            },
+            ServerMessage::Clipboard {
+                data: "text".into(),
+            },
+        ] {
+            assert!(!accepts_endpoint_message(
+                false, false, false, true, &effect
+            ));
+        }
     }
 
     #[test]
@@ -104,6 +155,7 @@ mod tests {
             false,
             true,
             false,
+            false,
             &ServerMessage::ClientShellEndpointResponseChunk {
                 boot_id: "boot".into(),
                 request_id: "surface".into(),
@@ -114,6 +166,7 @@ mod tests {
         assert!(!accepts_endpoint_message(
             false,
             true,
+            false,
             false,
             &ServerMessage::MouseCapture {
                 enabled: true,

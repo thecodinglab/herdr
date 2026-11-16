@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- Popup commands can set `run_on = "local"` to run on the local machine while you view an SSH machine. The popup is drawn over the remote view without switching machines, and gets `HERDR_VIEW_ENDPOINT`, `HERDR_VIEW_ENDPOINT_LABEL`, `HERDR_VIEW_WORKSPACE_ID`, `HERDR_VIEW_TAB_ID`, `HERDR_VIEW_PANE_ID` and `HERDR_VIEW_PANE_CWD` describing what you were viewing.
+
 ## [0.9.5] - 2026-10-14
 
 This is a hotfix release for v0.9.4. See the v0.9.4 notes for the full feature release: https://github.com/herdrdev/herdr/releases/tag/v0.9.4

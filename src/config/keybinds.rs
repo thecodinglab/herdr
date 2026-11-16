@@ -118,6 +118,23 @@ pub enum CommandKeybindType {
     PluginAction,
 }
 
+/// Which server runs a popup command while the client views another machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CommandRunOn {
+    /// Run on the server of the machine the client currently views.
+    #[default]
+    Endpoint,
+    /// Run on this machine's local server and draw it over the current view.
+    Local,
+}
+
+impl CommandRunOn {
+    fn is_endpoint(&self) -> bool {
+        *self == Self::Endpoint
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct CommandKeybindConfig {
@@ -134,6 +151,9 @@ pub struct CommandKeybindConfig {
     pub width: Option<PopupSize>,
     /// Optional popup height as cells or a percentage string when type = "popup".
     pub height: Option<PopupSize>,
+    /// Where a popup runs: "endpoint" (default) or "local". Only valid with type = "popup".
+    #[serde(skip_serializing_if = "CommandRunOn::is_endpoint")]
+    pub run_on: CommandRunOn,
 }
 
 impl Default for CommandKeybindConfig {
@@ -145,6 +165,7 @@ impl Default for CommandKeybindConfig {
             description: None,
             width: None,
             height: None,
+            run_on: CommandRunOn::Endpoint,
         }
     }
 }
@@ -334,6 +355,7 @@ pub struct CustomCommandKeybind {
     pub description: Option<String>,
     pub width: Option<PopupSize>,
     pub height: Option<PopupSize>,
+    pub run_on: CommandRunOn,
 }
 
 /// Parsed keybinds for Herdr actions.
@@ -814,6 +836,15 @@ fn append_custom_command_bindings(
             diagnostics.push(diag);
             continue;
         }
+        if command.run_on == CommandRunOn::Local && command.action_type != CommandKeybindType::Popup
+        {
+            let diag = format!(
+                "run_on = \"local\" requires type = \"popup\": keys.command[{index}]; disabling custom command"
+            );
+            warn!(message = %diag, "config diagnostic");
+            diagnostics.push(diag);
+            continue;
+        }
 
         let bindings = parse_action_bindings(
             &key_field,
@@ -853,6 +884,7 @@ fn append_custom_command_bindings(
             description: command.description.clone(),
             width,
             height,
+            run_on: command.run_on,
         });
     }
 }
@@ -2573,5 +2605,63 @@ width = "80%"
             .collect_diagnostics()
             .iter()
             .any(|diag| diag.contains("popup size on non-popup custom command")));
+    }
+
+    #[test]
+    fn local_popup_command_parses_run_on() {
+        let config: Config = toml::from_str(
+            r#"
+[[keys.command]]
+key = "prefix+u"
+command = "devtools switch"
+type = "popup"
+run_on = "local"
+
+[[keys.command]]
+key = "prefix+g"
+command = "lazygit"
+type = "popup"
+"#,
+        )
+        .unwrap();
+        assert!(config.collect_diagnostics().is_empty());
+        let keybinds = config.keybinds();
+        assert_eq!(keybinds.custom_commands[0].run_on, CommandRunOn::Local);
+        assert_eq!(keybinds.custom_commands[1].run_on, CommandRunOn::Endpoint);
+    }
+
+    #[test]
+    fn run_on_local_requires_a_popup_command() {
+        let config: Config = toml::from_str(
+            r#"
+[[keys.command]]
+key = "prefix+u"
+command = "devtools switch"
+type = "pane"
+run_on = "local"
+"#,
+        )
+        .unwrap();
+
+        assert!(config.keybinds().custom_commands.is_empty());
+        assert!(config
+            .collect_diagnostics()
+            .iter()
+            .any(|diag| diag
+                .contains("run_on = \"local\" requires type = \"popup\": keys.command[0]")));
+    }
+
+    #[test]
+    fn unknown_run_on_is_a_config_error() {
+        assert!(toml::from_str::<Config>(
+            r#"
+[[keys.command]]
+key = "prefix+u"
+command = "devtools switch"
+type = "popup"
+run_on = "elsewhere"
+"#,
+        )
+        .is_err());
     }
 }
