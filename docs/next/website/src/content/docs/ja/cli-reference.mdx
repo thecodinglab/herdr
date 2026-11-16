@@ -168,6 +168,16 @@ herdr workspace create --cwd ~/project --label api --no-focus
 
 ワークスペースは最上位のプロジェクトまたは作業コンテキストです。作成時に最初のタブとルートペインも作られます。JSON レスポンスの `.result.workspace.workspace_id`、`.result.tab.tab_id`、`.result.root_pane.pane_id` から各 ID を取得できます。
 
+接続中の Herdr クライアントにワークスペースを表示させます。必要ならマシンも切り替えます:
+
+```bash
+herdr client focus <workspace_id> [--endpoint local|PROFILE_ID|LABEL] [--all-clients] [--json]
+```
+
+`workspace focus` はサーバーのフォーカス中ワークスペースを変えます。`client focus` は TUI クライアントの表示を切り替えます。別のマシンにも切り替えられます。リクエストを受けたサーバーは、最後に操作された接続中クライアントに転送します。`--all-clients` を付けると接続中のすべてのクライアントに送ります。`--endpoint` を省略すると、そのサーバーのマシンのワークスペースを指します。`--endpoint` には `local`、または `herdr machine list` に表示される保存済みマシンのプロファイル ID かラベルを、クライアント側の名前で指定します。保存済み SSH マシンから届いたリクエストは、そのマシン自身のワークスペースにしかフォーカスできません。それ以外はクライアントが拒否します。ペイン、ポップアップ、サーバーと同じマシンの普通のターミナルのどこからでも実行できます。
+
+少なくとも 1 つのクライアントがリクエストを受け付けると終了コード 0 になります。受け付けたクライアントがない場合、たとえばクライアントが接続されていない、または古すぎる場合は `no attached herdr client accepted the focus request` を表示して終了コード 1 になります。`--json` はレスポンスを表示します。例: `{"id":"cli:client:focus","result":{"type":"client_focus","delivered":1}}`。受け付けはクライアントがリクエストを受信したことを意味し、切り替えの成功は保証しません。たとえば、クライアントは知らないマシンラベルを無視します。
+
 ## Worktree
 
 ```bash

@@ -1061,6 +1061,12 @@ impl App {
                     },
                 );
             }
+            Method::ClientFocus(_) => {
+                return responses::encode_success(
+                    request.id,
+                    ResponseResult::ClientFocus { delivered: 0 },
+                );
+            }
             Method::SessionSnapshot(_) => return self.handle_session_snapshot(request.id),
             Method::WorkspaceList(_) => return self.handle_workspace_list(request.id),
             Method::WorkspaceGet(target) => return self.handle_workspace_get(request.id, target),
@@ -1828,6 +1834,32 @@ mod tests {
         let clear: serde_json::Value = serde_json::from_str(&clear).unwrap();
         assert_eq!(clear["result"]["type"], "client_window_title");
         assert_eq!(clear["result"]["reason"], "no_foreground_client");
+    }
+
+    #[test]
+    fn client_focus_api_reports_no_delivery_in_app_mode() {
+        let (_api_tx, api_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            &crate::config::Config::default(),
+            crate::app::AppPolicy::TEST,
+            None,
+            api_rx,
+            crate::api::EventHub::default(),
+        );
+
+        let focus = app.handle_api_request(crate::api::schema::Request {
+            id: "focus".into(),
+            method: crate::api::schema::Method::ClientFocus(
+                crate::api::schema::ClientFocusParams {
+                    workspace_id: "w1".into(),
+                    endpoint: None,
+                    all_clients: false,
+                },
+            ),
+        });
+        let focus: serde_json::Value = serde_json::from_str(&focus).unwrap();
+        assert_eq!(focus["result"]["type"], "client_focus");
+        assert_eq!(focus["result"]["delivered"], 0);
     }
 
     #[cfg(unix)]

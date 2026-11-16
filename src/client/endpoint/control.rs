@@ -11,6 +11,7 @@ pub(crate) enum EndpointControlMessage {
     AgentViewProjection(DecodedAgentViewProjection),
     AgentCompletions(crate::protocol::endpoint::EndpointAgentCompletions),
     Snapshot(Box<crate::protocol::ClientShellSnapshot>),
+    ClientFocus(crate::protocol::endpoint::EndpointClientFocus),
     Ignored,
 }
 
@@ -24,6 +25,11 @@ pub(crate) fn decode_endpoint_control(
     if kind == crate::protocol::endpoint::AGENT_COMPLETIONS_KIND {
         return Ok(serde_json::from_str(data)
             .map(EndpointControlMessage::AgentCompletions)
+            .unwrap_or(EndpointControlMessage::Ignored));
+    }
+    if kind == crate::protocol::endpoint::CLIENT_FOCUS_KIND {
+        return Ok(serde_json::from_str(data)
+            .map(EndpointControlMessage::ClientFocus)
             .unwrap_or(EndpointControlMessage::Ignored));
     }
     if kind == crate::protocol::endpoint::AGENT_VIEW_PROJECTION_KIND {
@@ -79,6 +85,23 @@ mod tests {
     fn unknown_optional_controls_are_ignored() {
         assert!(matches!(
             decode_endpoint_control("future.optional", "not json").unwrap(),
+            EndpointControlMessage::Ignored
+        ));
+    }
+
+    #[test]
+    fn client_focus_control_decodes_and_malformed_payloads_are_ignored() {
+        let EndpointControlMessage::ClientFocus(focus) = decode_endpoint_control(
+            crate::protocol::endpoint::CLIENT_FOCUS_KIND,
+            r#"{"workspace_id":"w2","endpoint":"local"}"#,
+        )
+        .unwrap() else {
+            panic!("expected client focus");
+        };
+        assert_eq!(focus.workspace_id, "w2");
+        assert_eq!(focus.endpoint.as_deref(), Some("local"));
+        assert!(matches!(
+            decode_endpoint_control(crate::protocol::endpoint::CLIENT_FOCUS_KIND, "{}").unwrap(),
             EndpointControlMessage::Ignored
         ));
     }

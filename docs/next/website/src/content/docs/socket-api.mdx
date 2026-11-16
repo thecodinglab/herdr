@@ -98,7 +98,7 @@ Raw socket method names use dot notation:
 | --- | --- |
 | Server | `ping`, `server.stop`, `server.reload_config`, `server.agent_manifests`, `server.reload_agent_manifests` |
 | Notification | `notification.show` |
-| Client | `client.window_title.set`, `client.window_title.clear` |
+| Client | `client.window_title.set`, `client.window_title.clear`, `client.focus` |
 | Session | `session.snapshot` |
 | Workspace | `workspace.create`, `workspace.list`, `workspace.get`, `workspace.focus`, `workspace.rename`, `workspace.move`, `workspace.move_block`, `workspace.report_metadata`, `workspace.close` |
 | Worktree | `worktree.list`, `worktree.create`, `worktree.open`, `worktree.remove` |
@@ -340,6 +340,14 @@ Set or clear the foreground client's outer terminal window title:
 `client.window_title.clear` hands the title back to `ui.window_title`. The response is
 `type: "client_window_title"` with `changed` and reason `set`, `cleared`, or
 `no_foreground_client`.
+
+Ask attached TUI clients to focus a workspace, switching machines if needed:
+
+```json
+{"id":"req_focus","method":"client.focus","params":{"workspace_id":"w1","endpoint":null,"all_clients":false}}
+```
+
+The server forwards the request to the attached client that was active most recently, or to every attached client with `all_clients: true`. `endpoint` is optional. Leave it out or set it to `null` for a workspace on the server that received the request. Otherwise use `local` or a saved machine's profile ID or label, as the client sees them. The client refuses a request from a saved SSH machine that names any other machine. The response is `type: "client_focus"` with `delivered`, the number of clients that accepted the request. Older clients that cannot act on it are not counted. Without `endpoint`, an unknown workspace returns `workspace_not_found`.
 
 Worktree methods manage Git checkouts as Herdr workspaces. `worktree.create` creates a checkout and returns the new `workspace`, `tab`, `root_pane`, and `worktree` records. If the requested branch already exists locally, it checks out that branch; otherwise it creates the branch from the requested base or `HEAD`. `worktree.open` opens an existing checkout or returns the already-open workspace. `worktree.remove` runs `git worktree remove` against a linked child workspace and never deletes the branch.
 

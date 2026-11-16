@@ -31,6 +31,19 @@ pub const AGENT_VIEW_PROJECTION_CAPABILITY: &str = "agent_view_projection";
 pub const AGENT_VIEW_PROJECTION_KIND: &str = "endpoint.agent-view.v1";
 pub const AGENT_COMPLETIONS_CAPABILITY: &str = "agent_completions";
 pub const AGENT_COMPLETIONS_KIND: &str = "endpoint.agent-completions.v1";
+/// Client hello capability: the shell acts on `CLIENT_FOCUS_KIND` controls.
+pub const CLIENT_FOCUS_CAPABILITY: &str = "client_focus";
+pub const CLIENT_FOCUS_KIND: &str = "endpoint.client-focus.v1";
+
+/// Server-to-shell request to focus a workspace, forwarded from `client.focus`.
+/// `endpoint` names an endpoint in the receiving client's own catalog; when it is
+/// absent the workspace belongs to the endpoint whose server sent the control.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EndpointClientFocus {
+    pub workspace_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EndpointAgentCompletions {
@@ -72,6 +85,9 @@ pub struct EndpointClientHello {
     pub input_codecs: Vec<String>,
     #[serde(default)]
     pub blob_codecs: Vec<String>,
+    /// Optional named controls this shell acts on, such as `CLIENT_FOCUS_CAPABILITY`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -122,6 +138,13 @@ pub fn agent_completions_message(
     })
 }
 
+pub fn client_focus_message(focus: &EndpointClientFocus) -> serde_json::Result<ServerMessage> {
+    Ok(ServerMessage::EndpointControl {
+        kind: CLIENT_FOCUS_KIND.into(),
+        data: serde_json::to_string(focus)?,
+    })
+}
+
 pub fn agent_view_projection_message(
     boot_id: &str,
     revision: u64,
@@ -152,6 +175,10 @@ impl EndpointClientHello {
                 .iter()
                 .any(|codec| codec == INPUT_CODEC_V1)
             && self.blob_codecs.iter().any(|codec| codec == BLOB_CODEC_V1)
+    }
+
+    pub fn supports_capability(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|value| value == capability)
     }
 }
 
@@ -219,6 +246,7 @@ mod tests {
             surface_codecs: vec![SURFACE_CODEC_V1.into()],
             input_codecs: vec![INPUT_CODEC_V1.into()],
             blob_codecs: vec![BLOB_CODEC_V1.into()],
+            capabilities: Vec::new(),
         }
     }
 
@@ -256,6 +284,42 @@ mod tests {
         value["future_feature"] = serde_json::json!({"enabled": true});
         let decoded: EndpointClientHello = serde_json::from_value(value).unwrap();
         assert_eq!(decoded, hello());
+    }
+
+    #[test]
+    fn hello_capabilities_are_optional_and_omitted_when_empty() {
+        let value = serde_json::to_value(hello()).unwrap();
+        assert!(value.get("capabilities").is_none());
+
+        let mut hello = hello();
+        hello.capabilities = vec![CLIENT_FOCUS_CAPABILITY.into()];
+        let decoded: EndpointClientHello =
+            serde_json::from_value(serde_json::to_value(&hello).unwrap()).unwrap();
+        assert!(decoded.supports_capability(CLIENT_FOCUS_CAPABILITY));
+
+        let fixture: EndpointClientHello = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/endpoint-hello-v1.json"
+        )))
+        .unwrap();
+        assert!(!fixture.supports_capability(CLIENT_FOCUS_CAPABILITY));
+    }
+
+    #[test]
+    fn client_focus_uses_named_json_control() {
+        let focus = EndpointClientFocus {
+            workspace_id: "w1".into(),
+            endpoint: None,
+        };
+        let ServerMessage::EndpointControl { kind, data } = client_focus_message(&focus).unwrap()
+        else {
+            panic!("expected endpoint control");
+        };
+        assert_eq!(kind, CLIENT_FOCUS_KIND);
+        assert_eq!(data, r#"{"workspace_id":"w1"}"#);
+        let decoded: EndpointClientFocus =
+            serde_json::from_str(r#"{"workspace_id":"w1","endpoint":"local","future":1}"#).unwrap();
+        assert_eq!(decoded.endpoint.as_deref(), Some("local"));
     }
 
     #[test]

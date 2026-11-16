@@ -172,6 +172,16 @@ herdr workspace create --cwd ~/project --label api --no-focus
 
 A workspace is a top-level project or work context. Creating one also creates its first tab and root pane. The JSON response exposes their IDs as `.result.workspace.workspace_id`, `.result.tab.tab_id`, and `.result.root_pane.pane_id`.
 
+Ask an attached Herdr client to show a workspace, switching machines if needed:
+
+```bash
+herdr client focus <workspace_id> [--endpoint local|PROFILE_ID|LABEL] [--all-clients] [--json]
+```
+
+`workspace focus` changes the server's focused workspace. `client focus` asks the TUI client to switch its view, including to another machine. The server that receives the request forwards it to the attached client that was active most recently. Use `--all-clients` to send it to every attached client. Without `--endpoint`, the workspace belongs to that server's machine. `--endpoint` takes `local` or a saved machine's profile ID or label from `herdr machine list`, as the client sees them. A request that arrives from a saved SSH machine can only focus that machine's own workspaces. The client refuses anything else. You can run it from a pane, a popup, or a plain terminal on the server's machine.
+
+The command exits 0 when at least one client accepted the request. It exits 1 with `no attached herdr client accepted the focus request` when no client did, for example when no client is attached or the attached clients are too old. `--json` prints the response, such as `{"id":"cli:client:focus","result":{"type":"client_focus","delivered":1}}`. Delivery means the client received the request. It does not confirm the switch. For example, a client ignores a machine label it does not know.
+
 ## Worktrees
 
 ```bash

@@ -75,6 +75,7 @@ use crate::server::socket_paths::{
 use crate::server::terminal_attach::paste_payload_for_runtime;
 
 mod bootstrap;
+mod client_focus;
 mod client_views;
 mod endpoint_requests;
 mod lifecycle;
@@ -1910,6 +1911,7 @@ impl HeadlessServer {
                 surface_reuse,
                 surface_delta,
                 surface_scroll,
+                client_focus,
                 writer,
             } => {
                 if self.handoff_in_progress {
@@ -1953,6 +1955,7 @@ impl HeadlessServer {
                 connection.pixel_mouse = pixel_mouse && observed.is_known();
                 connection.direct_graphics = direct_graphics;
                 connection.shell_uses_endpoint_keybindings = endpoint_keybindings;
+                connection.accepts_client_focus = client_focus;
                 connection.shell_mouse_capture = mouse_capture;
                 connection.shell_surface_active = surface_active;
                 connection.render_state.enable_surface_reuse(surface_reuse);
@@ -2971,6 +2974,11 @@ impl HeadlessServer {
             }
             api::schema::Method::ClientWindowTitleClear(_) => {
                 let response = self.handle_client_window_title_api(msg.request.id.clone(), None);
+                let _ = msg.respond_to.send(response);
+                return true;
+            }
+            api::schema::Method::ClientFocus(params) => {
+                let response = self.handle_client_focus_api(msg.request.id.clone(), params.clone());
                 let _ = msg.respond_to.send(response);
                 return true;
             }

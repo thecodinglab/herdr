@@ -373,6 +373,41 @@ fn client_window_title_requests_round_trip() {
 }
 
 #[test]
+fn client_focus_requests_round_trip_with_optional_fields() {
+    let focus = Request {
+        id: "req_focus".into(),
+        method: Method::ClientFocus(ClientFocusParams {
+            workspace_id: "w1".into(),
+            endpoint: Some("local".into()),
+            all_clients: true,
+        }),
+    };
+    let json = serde_json::to_value(&focus).unwrap();
+    assert_eq!(json["method"], "client.focus");
+    assert_eq!(
+        json["params"],
+        serde_json::json!({"workspace_id": "w1", "endpoint": "local", "all_clients": true})
+    );
+    let restored: Request = serde_json::from_value(json).unwrap();
+    assert_eq!(restored, focus);
+
+    let minimal: Request = serde_json::from_value(serde_json::json!({
+        "id": "req_focus",
+        "method": "client.focus",
+        "params": {"workspace_id": "w2"},
+    }))
+    .unwrap();
+    assert_eq!(
+        minimal.method,
+        Method::ClientFocus(ClientFocusParams {
+            workspace_id: "w2".into(),
+            endpoint: None,
+            all_clients: false,
+        })
+    );
+}
+
+#[test]
 fn agent_view_requests_round_trip() {
     let set_json = serde_json::json!({
         "id": "view-set",

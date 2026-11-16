@@ -18,8 +18,8 @@ use tracing::{debug, warn};
 
 use crate::ipc::LocalStream;
 use crate::protocol::endpoint::{
-    EndpointClientHello, EndpointServerWelcome, ENDPOINT_HELLO_KIND, ENDPOINT_PROTOCOL_GENERATION,
-    ENDPOINT_WELCOME_KIND,
+    EndpointClientHello, EndpointServerWelcome, CLIENT_FOCUS_CAPABILITY, ENDPOINT_HELLO_KIND,
+    ENDPOINT_PROTOCOL_GENERATION, ENDPOINT_WELCOME_KIND,
 };
 use crate::protocol::{
     self, AttachScrollDirection, AttachScrollSource, ClientMessage, ClientPaneInputEvent,
@@ -419,6 +419,8 @@ pub(crate) enum ServerEvent {
         surface_reuse: bool,
         surface_delta: bool,
         surface_scroll: bool,
+        /// Whether the shell acts on forwarded `client.focus` requests.
+        client_focus: bool,
         writer: ClientWriter,
     },
     /// A client sent an input message.
@@ -787,6 +789,7 @@ pub(crate) fn handle_client_handshake(
                     hello.surface_reuse,
                     hello.surface_delta,
                     hello.surface_scroll,
+                    hello.supports_capability(CLIENT_FOCUS_CAPABILITY),
                 )),
             )
         }
@@ -884,6 +887,7 @@ pub(crate) fn handle_client_handshake(
         surface_reuse,
         surface_delta,
         surface_scroll,
+        client_focus,
     )) = shell_options
     {
         ServerEvent::ClientShellConnected {
@@ -900,6 +904,7 @@ pub(crate) fn handle_client_handshake(
             surface_reuse,
             surface_delta,
             surface_scroll,
+            client_focus,
             writer,
         }
     } else {
@@ -1481,6 +1486,7 @@ mod tests {
             surface_codecs: vec![crate::protocol::endpoint::SURFACE_CODEC_V1.into()],
             input_codecs: vec![crate::protocol::endpoint::INPUT_CODEC_V1.into()],
             blob_codecs: vec![crate::protocol::endpoint::BLOB_CODEC_V1.into()],
+            capabilities: Vec::new(),
         };
         ClientMessage::EndpointControl {
             kind: ENDPOINT_HELLO_KIND.into(),
@@ -2028,11 +2034,13 @@ mod tests {
                 surface_reuse,
                 surface_delta,
                 surface_scroll,
+                client_focus,
                 writer,
             } => {
                 assert!(!surface_reuse);
                 assert!(!surface_delta);
                 assert!(!surface_scroll);
+                assert!(!client_focus);
                 assert_eq!(client_id, 43);
                 assert_eq!((surface_cols, surface_rows), (80, 29));
                 assert_eq!((cell_width_px, cell_height_px), (8, 16));
