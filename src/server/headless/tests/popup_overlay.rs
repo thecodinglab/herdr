@@ -38,7 +38,7 @@ fn connect_presenting_elsewhere(
         surface_reuse: false,
         surface_delta: false,
         surface_scroll: false,
-        client_focus: false,
+        client_focus: true,
         client_id: OVERLAY_CLIENT,
         surface_cols: 100,
         surface_rows: 30,
@@ -350,5 +350,109 @@ async fn overlay_client_resize_reflows_the_popup() {
         pixel_mouse: false,
     }));
     assert_eq!(server.clients[&OVERLAY_CLIENT].terminal_size, (120, 40));
+    shutdown_test_runtimes(&mut server);
+}
+
+fn client_focus_request(server: &mut HeadlessServer, endpoint: &str) -> serde_json::Value {
+    let (respond_to, response_rx) = std::sync::mpsc::channel();
+    server.handle_api_request_with_shutdown_check(api::ApiRequestMessage {
+        request: api::schema::Request {
+            id: "focus".into(),
+            method: api::schema::Method::ClientFocus(api::schema::ClientFocusParams {
+                workspace_id: "w9".into(),
+                endpoint: Some(endpoint.into()),
+                all_clients: false,
+            }),
+        },
+        respond_to,
+        response_write_complete: None,
+    });
+    serde_json::from_str(&response_rx.recv().unwrap()).unwrap()
+}
+
+/// The endpoint of the next forwarded focus request queued for one client, if one arrives
+/// within `wait`. Test writers drain on a thread, so absence needs a short wait too.
+fn next_focus_endpoint(
+    receiver: &std::sync::mpsc::Receiver<Vec<u8>>,
+    wait: Duration,
+) -> Option<Option<String>> {
+    let deadline = Instant::now() + wait;
+    loop {
+        let remaining = deadline.checked_duration_since(Instant::now())?;
+        let bytes = receiver.recv_timeout(remaining).ok()?;
+        if let ServerMessage::EndpointControl { kind, data } = read_server_message(bytes) {
+            if kind == protocol::endpoint::CLIENT_FOCUS_KIND {
+                let focus: protocol::endpoint::EndpointClientFocus =
+                    serde_json::from_str(&data).unwrap();
+                return Some(focus.endpoint);
+            }
+        }
+    }
+}
+
+const DELIVERED: Duration = Duration::from_secs(5);
+const NOT_DELIVERED: Duration = Duration::from_millis(200);
+
+/// `herdr client focus <ws> --endpoint <viewed machine>` run inside a `run_on = "local"` popup
+/// reaches the local server, which must forward it to the client that owns the overlay even
+/// though that client's surface here is inactive and another local viewer was used more
+/// recently before the popup opened.
+#[tokio::test]
+async fn client_focus_from_a_local_popup_overlay_reaches_the_overlay_owner() {
+    let mut server = test_headless_server();
+    install_shared_view_test_runtime(&mut server);
+    install_local_popup(&mut server, local_popup_binding("sleep 30"));
+    let (control, _render) = connect_presenting_elsewhere(&mut server);
+    let (viewer_control, _viewer_render) = connect_matching_test_shell(&mut server, LOCAL_VIEWER);
+    server
+        .clients
+        .get_mut(&LOCAL_VIEWER)
+        .unwrap()
+        .accepts_client_focus = true;
+    server.promote_client_to_foreground(LOCAL_VIEWER);
+
+    assert!(open(&mut server, OVERLAY_CLIENT));
+    assert!(response(&control).get("result").is_some());
+    let viewed = view().endpoint_id;
+
+    let reply = client_focus_request(&mut server, &viewed);
+    assert_eq!(reply["result"]["delivered"], 1, "{reply}");
+    assert_eq!(
+        next_focus_endpoint(&control, DELIVERED),
+        Some(Some(viewed.clone()))
+    );
+    assert_eq!(next_focus_endpoint(&viewer_control, NOT_DELIVERED), None);
+    assert_eq!(
+        server.foreground_client_id,
+        Some(LOCAL_VIEWER),
+        "the overlay owner must not become this server's foreground client"
+    );
+
+    // The local viewer is used again: it is now the most recently active client.
+    server.promote_client_to_foreground(LOCAL_VIEWER);
+    client_focus_request(&mut server, &viewed);
+    assert_eq!(
+        next_focus_endpoint(&viewer_control, DELIVERED),
+        Some(Some(viewed.clone()))
+    );
+    assert_eq!(next_focus_endpoint(&control, NOT_DELIVERED), None);
+
+    // Typing into the overlay popup makes its owner the target again.
+    let terminal_id = server
+        .app
+        .state
+        .popup_pane
+        .as_ref()
+        .unwrap()
+        .terminal_id
+        .clone();
+    server.handle_server_event(ServerEvent::ClientShellPopupInput {
+        client_id: OVERLAY_CLIENT,
+        terminal_id: terminal_id.to_string(),
+        events: vec![protocol::ClientPaneInputEvent::Paste("x".into())],
+    });
+    client_focus_request(&mut server, &viewed);
+    assert_eq!(next_focus_endpoint(&control, DELIVERED), Some(Some(viewed)));
+    assert_eq!(next_focus_endpoint(&viewer_control, NOT_DELIVERED), None);
     shutdown_test_runtimes(&mut server);
 }

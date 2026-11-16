@@ -258,6 +258,11 @@ you were viewing:
 
 Without a local workspace, a local popup starts in your home directory.
 
+From inside a local popup, `herdr machine workspaces --json` lists workspaces on
+every machine, and `herdr client focus <workspace_id> --endpoint <machine>`
+switches the client that opened the popup to that workspace. The popup closes
+first.
+
 `type = "pane"` opens a temporary zoomed pane and closes it when the command exits.
 
 `type = "shell"` runs detached in the background.

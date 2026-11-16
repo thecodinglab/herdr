@@ -2534,6 +2534,9 @@ impl HeadlessServer {
                         &events,
                     );
                 }
+                if interaction && overlay_client {
+                    self.note_popup_overlay_activity(client_id);
+                }
                 let foreground_changed =
                     interaction && !overlay_client && self.promote_client_to_foreground(client_id);
                 let geometry_changed = interaction

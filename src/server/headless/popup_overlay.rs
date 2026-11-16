@@ -29,6 +29,17 @@ impl HeadlessServer {
             .is_some_and(|owner| owner.client_id == client_id)
     }
 
+    /// Opening or driving the overlay counts as activity for `client.focus` targeting, so a
+    /// focus request sent from inside the popup reaches this client rather than another one.
+    /// The owner presents another machine, so its surface here stays inactive and it must not
+    /// become this server's foreground client.
+    pub(super) fn note_popup_overlay_activity(&mut self, client_id: u64) {
+        let stamp = self.allocate_activity_stamp();
+        if let Some(client) = self.clients.get_mut(&client_id) {
+            client.last_activity = stamp;
+        }
+    }
+
     /// Answer `client_shell.popup_overlay.*` on the endpoint lane. These run before the
     /// active-surface gate because the requesting client presents another machine.
     pub(super) fn handle_popup_overlay_request(
@@ -112,6 +123,7 @@ impl HeadlessServer {
             sent_any: false,
             surface_revision: 0,
         });
+        self.note_popup_overlay_activity(client_id);
         self.app.render_dirty.request_generic();
         Ok(true)
     }

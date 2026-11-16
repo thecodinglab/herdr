@@ -330,3 +330,81 @@ fn focus_requests_close_the_local_popup_before_navigating() {
             if matches!(&request.method, crate::api::schema::Method::WorkspaceFocus(_))
     )));
 }
+
+fn overlay_close_then(outcome: &ClientShellInput) -> &[ClientShellAction] {
+    match outcome.actions.as_slice() {
+        [ClientShellAction::LocalPopupOverlay(close), rest @ ..]
+            if matches!(
+                close.request.method,
+                crate::api::schema::Method::ClientShellPopupOverlayClose(_)
+            ) =>
+        {
+            rest
+        }
+        actions => panic!("expected the overlay close first, got {actions:?}"),
+    }
+}
+
+/// `herdr client focus <ws> --endpoint <id>` run inside a `run_on = "local"` popup arrives as a
+/// focus control from Local. It closes the overlay and then navigates the presented machine, or
+/// switches to the named one.
+#[test]
+fn client_focus_from_the_local_popup_closes_it_and_navigates() {
+    let request = |endpoint: &str| crate::protocol::endpoint::EndpointClientFocus {
+        workspace_id: "ws_9".into(),
+        endpoint: Some(endpoint.into()),
+    };
+
+    let (mut state, remote) = state_viewing_remote();
+    open_overlay(&mut state);
+    let outcome = state
+        .focus_requested_by_endpoint(
+            &ClientEndpointId::Local,
+            request(remote_profile().id.as_str()),
+        )
+        .expect("local may target the presented machine");
+    assert!(!state.local_popup_overlay_active());
+    assert!(matches!(
+        overlay_close_then(&outcome),
+        [ClientShellAction::Endpoint { endpoint_id, request, .. }]
+            if *endpoint_id == remote
+                && matches!(&request.method, crate::api::schema::Method::WorkspaceFocus(target)
+                    if target.workspace_id == "ws_9")
+    ));
+
+    let mut other = remote_profile();
+    other.id = ProfileId::parse("fedcba9876543210fedcba9876543210").unwrap();
+    other.label = "Other".into();
+    let (mut state, _) = state_viewing_remote();
+    state.set_endpoint_catalog(&[remote_profile(), other.clone()]);
+    let other_id = ClientEndpointId::Ssh(other.id.clone());
+    state.set_endpoint_status(&other_id, ClientEndpointStatus::Online);
+    let mut other_projection = snapshot();
+    other_projection.boot_id = "other-boot".into();
+    state.set_endpoint_snapshot(&other_id, Box::new(other_projection));
+    open_overlay(&mut state);
+    let outcome = state
+        .focus_requested_by_endpoint(&ClientEndpointId::Local, request("Other"))
+        .expect("local may target another saved machine");
+    assert!(!state.local_popup_overlay_active());
+    assert!(matches!(
+        overlay_close_then(&outcome),
+        [ClientShellAction::ActivateEndpoint {
+            endpoint_id,
+            target: Some(ClientEndpointFocusTarget::Workspace(workspace_id)),
+        }] if *endpoint_id == other_id && workspace_id == "ws_9"
+    ));
+
+    let (mut state, _) = state_viewing_remote();
+    open_overlay(&mut state);
+    let outcome = state
+        .focus_requested_by_endpoint(&ClientEndpointId::Local, request("local"))
+        .expect("local may target itself");
+    assert!(matches!(
+        overlay_close_then(&outcome),
+        [ClientShellAction::ActivateEndpoint {
+            endpoint_id: ClientEndpointId::Local,
+            target: Some(ClientEndpointFocusTarget::Workspace(_)),
+        }]
+    ));
+}
