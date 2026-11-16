@@ -51,6 +51,7 @@ herdr api schema --output herdr-api.schema.json
 
 ```bash
 herdr machine list
+herdr machine workspaces --json
 herdr machine add workbox
 herdr machine add workbox --label "Build machine"
 herdr machine rename <profile-id> --label "New name"
@@ -67,6 +68,8 @@ herdr machine remove <profile-id>
 
 `herdr machine status [<label-or-id>] [--json]` 可非交互式检查 SSH 和远程 Herdr。`reachable` 表示本次检查成功，不代表 TUI 当前已连接。在终端运行 `herdr machine reconnect <label-or-id>` 可认证并验证连接，不会安装或更新 Herdr。已打开的客户端会在 30 秒内重试。点击 `! auth` 或 `! error` 会重试；失败后会显示最新错误和 CLI 命令；侧边栏折叠时显示 `!`。平台限制请参阅[恢复 SSH 认证](/zh-cn/docs/connecting-machines/#恢复-ssh-认证)。需要远程设置时使用 `herdr --remote workbox`，仅在命名会话时添加 `--session <name>`。
 
+`herdr machine workspaces [--json] [--timeout-ms <N>]` 以只读方式一次列出 Local 和所有已保存机器的工作区。各机器通过共享的 SSH 连接并行查询，每台都受 `--timeout-ms`(默认 5000)限制。它不会启动服务器，不可用的机器只会改变自己的 `status`(`ok`、本地服务器未运行时为 `offline`、`disabled`、`auth_required`、`timeout`，或包括协议不匹配在内的 `error`)；只要能读取已保存机器列表，退出码就是 0。`--json` 输出 `{"machines":[...]}`，Local 在前，随后按列表顺序列出已保存机器。每台机器包含 `id`(`local` 或配置 ID)、`label`、`kind`、`status`、`error`、`elapsed_ms` 和 `workspaces`；每个工作区包含 `workspace_id`、`number`、`label`、`focused`、`agent_status`、`agent_title`(最紧急代理的终端标题)、`tab_count`、`cwd`(该机器上聚焦窗格的当前目录)、`branch` 和 `worktree`。未知值为 `null`。
+
 工作区、标签页、窗格 ID 和智能体名称仅在所属服务器内有效。UI 中的选择不会改变 CLI 的目标。使用全局**前缀** `--machine <label-or-id>` 将 API 命令发送到已保存的 SSH 机器：
 
 ```bash
@@ -82,7 +85,7 @@ herdr --machine "Build machine" worktree create --cwd /srv/project --branch revi
 
 请求和响应通过非交互式 SSH 传输 JSON API，API 内容不会被拼接到 SSH shell 命令中。不需要打开 TUI，也不会自动安装、启动或重启服务器。请更新本地 CLI 和远程 Herdr，并确保运行中的服务器 API 协议兼容。认证、连接或版本错误不会回退到 Local，连接失败后也不会自动重试请求。
 
-远程命令不会继承调用方的本地窗格 ID，请显式指定远程 ID。`--current` 不能引用本地窗格。远程 worktree 路径必须为绝对路径、`~` 或以 `~/` 开头（由服务器展开）；插件 link 路径必须为绝对路径。每次只操作一台机器，不包含合并列表或通过其他 TUI 连接转发的功能。
+远程命令不会继承调用方的本地窗格 ID，请显式指定远程 ID。`--current` 不能引用本地窗格。远程 worktree 路径必须为绝对路径、`~` 或以 `~/` 开头（由服务器展开）；插件 link 路径必须为绝对路径。每次只操作一台机器，不包含通过其他 TUI 连接转发的功能。合并的工作区列表请使用 `herdr machine workspaces`。
 
 ## Shell 补全
 

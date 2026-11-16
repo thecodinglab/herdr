@@ -79,7 +79,7 @@ herdr machine enable <profile-id>
 herdr machine remove <profile-id>
 ```
 
-スクリプトでは `machine list` に `--json` を追加できます。
+スクリプトでは `machine list` に `--json` を追加できます。`herdr machine workspaces [--json]` は Local と保存済みのすべてのマシンのワークスペースを、マシンごとのタイムアウト付きで並列に問い合わせて一度に一覧表示します。JSON のフィールドは [CLI リファレンス](/ja/docs/cli-reference/)を参照してください。
 
 名前の変更は表示ラベルだけを更新し、再接続しません。無効化はプロファイルを残し、削除はプロファイルを忘れます。どちらもクライアントからそのマシンだけを切断し、到達不能なホストでも操作できます。リモートセッションとエージェントは動き続けます。
 

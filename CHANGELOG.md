@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- `herdr machine workspaces [--json]` lists the workspaces of Local and every saved SSH machine in one read-only call. Machines are queried in parallel with a per-machine `--timeout-ms` (default 5000), and an offline, disabled, unauthenticated, slow, or incompatible machine only changes its own status. Workspace records from the API now include the checkout's Git `branch` when known.
+
 ## [0.9.5] - 2026-10-14
 
 This is a hotfix release for v0.9.4. See the v0.9.4 notes for the full feature release: https://github.com/herdrdev/herdr/releases/tag/v0.9.4

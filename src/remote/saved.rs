@@ -73,7 +73,28 @@ impl SavedSshApiBridge {
         use_cached_metadata: bool,
         allow_retry: bool,
     ) -> io::Result<Self> {
-        let ssh = validated_saved_ssh(profile_id, target, session)?;
+        Self::start_cancellable(
+            profile_id,
+            target,
+            session,
+            use_cached_metadata,
+            allow_retry,
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+
+    /// Starts a bridge whose discovery commands and SSH children stop once
+    /// `cancelled` is set, so a caller can bound a hung connection.
+    pub(crate) fn start_cancellable(
+        profile_id: &str,
+        target: &str,
+        session: &str,
+        use_cached_metadata: bool,
+        allow_retry: bool,
+        cancelled: Arc<AtomicBool>,
+    ) -> io::Result<Self> {
+        let mut ssh = validated_saved_ssh(profile_id, target, session)?;
+        ssh.cancelled = Arc::clone(&cancelled);
         let mut can_retry = allow_retry;
         let metadata_cache =
             crate::client::endpoint::SshMetadataCache::new(profile_id, target, session)?;
@@ -109,7 +130,7 @@ impl SavedSshApiBridge {
             path.clone(),
             ssh.options(),
             true,
-            Arc::new(AtomicBool::new(false)),
+            cancelled,
         )?;
         Ok(Self {
             path,

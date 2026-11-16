@@ -79,7 +79,7 @@ herdr machine enable <profile-id>
 herdr machine remove <profile-id>
 ```
 
-用于脚本时，可给 `machine list` 添加 `--json`。
+用于脚本时，可给 `machine list` 添加 `--json`。`herdr machine workspaces [--json]` 会并行查询 Local 和所有已保存机器(每台机器单独超时)，一次列出它们的工作区；JSON 字段见 [CLI 参考](/zh-cn/docs/cli-reference/)。
 
 重命名只修改显示标签，不会重连。禁用会保留配置供以后使用，移除则会忘记该配置。两者都只从客户端断开该机器，即使主机无法访问也可以操作；远程会话和智能体仍会运行。
 

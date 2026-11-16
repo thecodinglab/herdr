@@ -17,6 +17,15 @@ pub(super) fn command() -> Command {
                 .arg(json_flag()),
         )
         .subcommand(
+            Command::new("workspaces")
+                .about("List workspaces of Local and every saved machine in parallel")
+                .arg(json_flag())
+                .arg(
+                    option("timeout-ms", "N")
+                        .help("Give each machine this many milliseconds (default 5000)"),
+                ),
+        )
+        .subcommand(
             Command::new("reconnect")
                 .about("Authenticate a saved machine in this terminal and verify connectivity")
                 .arg(Arg::new("machine").value_name("LABEL_OR_ID").required(true)),

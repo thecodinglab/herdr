@@ -53,6 +53,7 @@ with the installed binary. Use `--json` for the full JSON Schema document, or
 
 ```bash
 herdr machine list
+herdr machine workspaces --json
 herdr machine add workbox
 herdr machine add workbox --label "Build machine"
 herdr machine rename <profile-id> --label "New name"
@@ -69,6 +70,8 @@ Changes apply automatically to open local Herdr clients, normally within a secon
 
 Use `herdr machine status [<label-or-id>] [--json]` for fresh, noninteractive SSH and remote Herdr checks. `reachable` describes this check, not a TUI's current connection. Use `herdr machine reconnect <label-or-id>` in a terminal for SSH authentication and verification; it does not install or update Herdr. Open clients retry failed connections within 30 seconds. Clicking `! auth` or `! error` retries the connection; a failed attempt shows the latest error and CLI guidance; collapsed sidebars show `!`. See [Recovering SSH authentication](/docs/connecting-machines/#recovering-ssh-authentication) for platform limits. For remote setup, use `herdr --remote workbox`, adding `--session <name>` only for a named session.
 
+Use `herdr machine workspaces [--json] [--timeout-ms <N>]` to list the workspaces of Local and every saved machine in one read-only call. Machines are queried in parallel over the shared SSH connection, each bounded by `--timeout-ms` (default 5000). It never starts a server, and an unavailable machine only changes its own `status` (`ok`, `offline` when the local server is not running, `disabled`, `auth_required`, `timeout`, or `error`, including protocol mismatches); the command exits 0 whenever the saved-machine catalog is readable. `--json` prints `{"machines":[...]}` with Local first, then saved machines in catalog order; each machine has `id` (`local` or the profile ID), `label`, `kind`, `status`, `error`, `elapsed_ms`, and `workspaces`. Each workspace has `workspace_id`, `number`, `label`, `focused`, `agent_status`, `agent_title` (terminal title of its most urgent agent), `tab_count`, `cwd` (the focused pane's current directory on that machine), `branch`, and `worktree`; unknown values are `null`.
+
 Workspace, tab, pane IDs, and agent names belong to a single server. Selecting a machine in the UI does not retarget CLI commands. Use the global **prefix** `--machine <label-or-id>` to route API commands to a saved SSH machine:
 
 ```bash
@@ -84,7 +87,7 @@ Supported commands are `workspace`, `worktree`, `tab`, `pane`, `notification`, `
 
 Requests and responses travel through the JSON API over non-interactive SSH; API payloads are not interpolated into the SSH shell command. No open TUI is required, and the bridge never installs, starts, or restarts a server. Update the local CLI and remote Herdr installation to support machine forwarding, and keep the running remote server's API protocol compatible. Authentication, unavailable machines, and incompatible versions fail without falling back to Local. Requests are not automatically retried after connection failure.
 
-Local pane IDs are not inherited by remote commands. Use explicit remote IDs; `--current` cannot refer to the caller's local pane. Remote worktree paths must be absolute, `~`, or start with `~/` (expanded on the server); plugin link paths must be absolute. The prefix targets one machine at a time; combined listings and routing through another TUI's connections are not included.
+Local pane IDs are not inherited by remote commands. Use explicit remote IDs; `--current` cannot refer to the caller's local pane. Remote worktree paths must be absolute, `~`, or start with `~/` (expanded on the server); plugin link paths must be absolute. The prefix targets one machine at a time; routing through another TUI's connections is not included. For a combined workspace listing, use `herdr machine workspaces`.
 
 ## Shell completions
 

@@ -781,3 +781,253 @@ fn machine_api_protocol_mismatch_never_sends_the_mutation() {
     assert!(!error.contains("HERDR_SOCKET_PATH="), "{error}");
     harness.assert_local_untouched();
 }
+
+fn workspace_snapshot(protocol: u64, workspace_id: &str, label: &str) -> Value {
+    json!({"result": {"type": "session_snapshot", "snapshot": {
+        "version": "test",
+        "protocol": protocol,
+        "focused_workspace_id": workspace_id,
+        "workspaces": [{
+            "workspace_id": workspace_id, "number": 1, "label": label, "focused": true,
+            "pane_count": 1, "tab_count": 1, "active_tab_id": format!("{workspace_id}:1"),
+            "agent_status": "working", "branch": "main"
+        }],
+        "tabs": [],
+        "panes": [{
+            "pane_id": format!("{workspace_id}-1"), "terminal_id": "t1",
+            "workspace_id": workspace_id, "tab_id": format!("{workspace_id}:1"), "focused": true,
+            "cwd": "/srv", "foreground_cwd": format!("/srv/{label}"),
+            "agent_status": "working", "revision": 0
+        }],
+        "layouts": [{
+            "workspace_id": workspace_id, "tab_id": format!("{workspace_id}:1"), "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+            "focused_pane_id": format!("{workspace_id}-1"), "panes": [], "splits": []
+        }],
+        "agents": [{
+            "terminal_id": "t1", "workspace_id": workspace_id, "tab_id": format!("{workspace_id}:1"),
+            "pane_id": format!("{workspace_id}-1"), "focused": true, "agent_status": "working",
+            "terminal_title": format!("* {label} task"), "terminal_title_stripped": format!("{label} task")
+        }]
+    }}})
+}
+
+impl Harness {
+    fn serve_local(&self, mut response: Value) -> std::thread::JoinHandle<Value> {
+        let listener = self.local.try_clone().unwrap();
+        std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "local request did not arrive");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("{error}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut line)
+                .unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            response["id"] = request["id"].clone();
+            writeln!(stream, "{response}").unwrap();
+            request
+        })
+    }
+
+    fn add_disabled_machine(&self) {
+        fs::write(self.state.join("endpoints.json"), serde_json::to_vec(&json!({
+            "version": 1,
+            "ssh": [
+                {"id": PROFILE_ID, "label": "mac", "target": "fake-mac", "session": "fleet", "enabled": true},
+                {"id": "fedcba9876543210fedcba9876543210", "label": "parked", "target": "fake-parked", "session": "default", "enabled": false}
+            ]
+        })).unwrap()).unwrap();
+    }
+
+    fn assert_no_bridge_sockets(&self) {
+        assert!(!fs::read_dir(&self.root).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("herdr-api-")));
+    }
+}
+
+#[test]
+fn machine_workspaces_lists_local_then_saved_machines_in_catalog_order() {
+    let harness = Harness::new();
+    harness.add_disabled_machine();
+    let local = harness.serve_local(workspace_snapshot(harness.protocol, "wL", "local-work"));
+    let remote = harness.serve(
+        workspace_snapshot(harness.protocol, "wR", "remote-work"),
+        harness.protocol,
+    );
+    let report = success(
+        harness
+            .command(&["machine", "workspaces", "--json"])
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(local.join().unwrap()["method"], "session.snapshot");
+    assert_eq!(remote.join().unwrap()["method"], "session.snapshot");
+    let machines = report["machines"].as_array().unwrap();
+    let summary = machines
+        .iter()
+        .map(|machine| {
+            (
+                machine["id"].as_str().unwrap(),
+                machine["label"].as_str().unwrap(),
+                machine["kind"].as_str().unwrap(),
+                machine["status"].as_str().unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        summary,
+        [
+            ("local", "local", "local", "ok"),
+            (PROFILE_ID, "mac", "ssh", "ok"),
+            (
+                "fedcba9876543210fedcba9876543210",
+                "parked",
+                "ssh",
+                "disabled"
+            ),
+        ]
+    );
+    assert!(machines[0]["elapsed_ms"].is_u64());
+    assert!(machines[1]["error"].is_null());
+    assert_eq!(machines[2]["workspaces"], json!([]));
+    assert_eq!(
+        machines[1]["workspaces"],
+        json!([{
+            "workspace_id": "wR", "number": 1, "label": "remote-work", "focused": true,
+            "agent_status": "working", "agent_title": "remote-work task", "tab_count": 1,
+            "cwd": "/srv/remote-work", "branch": "main", "worktree": null
+        }])
+    );
+    assert_eq!(machines[0]["workspaces"][0]["label"], "local-work");
+    assert!(
+        !fs::read_to_string(harness.root.join("ssh-args"))
+            .unwrap_or_default()
+            .contains("fake-parked"),
+        "disabled machines are never contacted"
+    );
+    harness.assert_no_bridge_sockets();
+}
+
+#[test]
+fn machine_workspaces_reports_unavailable_machines_without_failing() {
+    let harness = Harness::new();
+    let output = harness
+        .command(&["machine", "workspaces", "--json"])
+        .env("HERDR_SOCKET_PATH", harness.root.join("missing-local.sock"))
+        .env("TEST_MODE", "offline")
+        .output()
+        .unwrap();
+    let report = success(output);
+    assert_eq!(report["machines"][0]["status"], "offline");
+    assert_eq!(report["machines"][1]["status"], "error");
+    let error = report["machines"][1]["error"].as_str().unwrap();
+    assert!(error.contains("test remote connection failed"), "{error}");
+
+    let output = harness
+        .command(&["machine", "workspaces"])
+        .env("HERDR_SOCKET_PATH", harness.root.join("missing-local.sock"))
+        .env("TEST_MODE", "offline")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.starts_with("local  offline"), "{text}");
+    assert!(text.contains("\nmac    error: "), "{text}");
+    harness.assert_local_untouched();
+}
+
+#[test]
+fn machine_workspaces_maps_a_remote_protocol_mismatch_to_error() {
+    let harness = Harness::new();
+    let remote = harness.serve(
+        workspace_snapshot(harness.protocol + 1, "wR", "remote-work"),
+        harness.protocol,
+    );
+    let report = success(
+        harness
+            .command(&["machine", "workspaces", "--json"])
+            .env("HERDR_SOCKET_PATH", harness.root.join("missing-local.sock"))
+            .output()
+            .unwrap(),
+    );
+    assert_eq!(remote.join().unwrap()["method"], "session.snapshot");
+    let machine = &report["machines"][1];
+    assert_eq!(machine["status"], "error");
+    assert_eq!(machine["workspaces"], json!([]));
+    let error = machine["error"].as_str().unwrap();
+    assert!(error.contains("older than server protocol"), "{error}");
+}
+
+#[test]
+fn machine_workspaces_bounds_a_hung_machine_and_cleans_up_its_bridge() {
+    let harness = Harness::new();
+    harness.warm_metadata();
+    let listener = harness.remote.try_clone().unwrap();
+    let hung = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            match listener.accept() {
+                // Hold the connection open without answering.
+                Ok((stream, _)) => {
+                    std::thread::sleep(Duration::from_secs(4));
+                    drop(stream);
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "remote request did not arrive");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        }
+    });
+    let started = Instant::now();
+    let report = success(
+        harness
+            .command(&["machine", "workspaces", "--json", "--timeout-ms=700"])
+            .env("HERDR_SOCKET_PATH", harness.root.join("missing-local.sock"))
+            .output()
+            .unwrap(),
+    );
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+    assert_eq!(report["machines"][0]["status"], "offline");
+    assert_eq!(report["machines"][1]["status"], "timeout");
+    assert_eq!(report["machines"][1]["elapsed_ms"], 700);
+    harness.assert_no_bridge_sockets();
+    hung.join().unwrap();
+}
+
+#[test]
+fn machine_workspaces_usage_errors_do_not_connect() {
+    let harness = Harness::new();
+    for args in [
+        vec!["machine", "workspaces", "mac"],
+        vec!["machine", "workspaces", "--timeout-ms"],
+        vec!["machine", "workspaces", "--timeout-ms", "0"],
+    ] {
+        assert_eq!(
+            harness.command(&args).output().unwrap().status.code(),
+            Some(2),
+            "{args:?}"
+        );
+    }
+    assert!(!harness.root.join("ssh-args").exists());
+    harness.assert_local_untouched();
+}
